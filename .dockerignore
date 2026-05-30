@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+data
+.env
+.env.*
+!.env.example
+.git
+.ref
+.docs
+.claude
+*.log
+*.tar

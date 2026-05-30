@@ -1,0 +1,13 @@
+{
+  "name": "NyaaLibrary-MCP",
+  "description": "用于 LLM 聊天知识库的 MCP（内置前端管理页面）",
+  "author": "NyaaCaster",
+  "repository": "https://github.com/NyaaCaster/NyaaLibrary-MCP.git",
+  "registry": "localhost:5000/nyaalibrary-mcp",
+  "stack": ["Node", "Express", "MCP-SDK", "SQLite", "sqlite-vec", "FTS5", "Vite", "React", "TypeScript", "Tailwind", "Docker"],
+  "container": "nyaalibrary-mcp",
+  "port": "5101:5101",
+  "branch": "master",
+  "license": "AGPL-3.0",
+  "blessing": "Nyaa be with you."
+}

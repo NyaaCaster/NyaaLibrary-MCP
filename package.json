@@ -1,0 +1,21 @@
+{
+  "name": "nyaalibrary-mcp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "frontend",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev -w server\" \"npm run dev -w frontend\"",
+    "build": "npm run build -w frontend && npm run build -w server",
+    "build:frontend": "npm run build -w frontend",
+    "build:server": "npm run build -w server",
+    "start": "npm run start -w server",
+    "typecheck": "npm run typecheck -w frontend && npm run typecheck -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

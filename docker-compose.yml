@@ -1,0 +1,17 @@
+services:
+  app:
+    build: .
+    image: nyaalibrary-mcp:latest
+    container_name: nyaalibrary-mcp
+    env_file:
+      - .env
+    environment:
+      - APP_PORT=5101
+      - HOST=0.0.0.0
+      - DATA_DIR=/app/data
+      - TZ=Asia/Shanghai
+    ports:
+      - "5101:5101"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
