@@ -7,9 +7,17 @@ interface ModalProps {
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  widthClass?: string;
 }
 
-export function Modal({ open, title, onClose, children, footer }: ModalProps) {
+export function Modal({
+  open,
+  title,
+  onClose,
+  children,
+  footer,
+  widthClass = "max-w-lg",
+}: ModalProps) {
   if (!open) return null;
   return (
     <div
@@ -17,7 +25,7 @@ export function Modal({ open, title, onClose, children, footer }: ModalProps) {
       onMouseDown={onClose}
     >
       <div
-        className="w-full max-w-lg rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900"
+        className={`flex max-h-[90vh] w-full ${widthClass} flex-col rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3 dark:border-slate-800">
@@ -30,7 +38,7 @@ export function Modal({ open, title, onClose, children, footer }: ModalProps) {
             <X size={18} />
           </button>
         </div>
-        <div className="px-5 py-4">{children}</div>
+        <div className="overflow-y-auto px-5 py-4">{children}</div>
         {footer && (
           <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-3 dark:border-slate-800">
             {footer}

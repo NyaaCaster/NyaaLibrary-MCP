@@ -4,6 +4,7 @@ import { authRouter } from "./auth.js";
 import { kbRouter } from "./kb.js";
 import { embeddingRouter } from "./embedding.js";
 import { libraryRouter } from "./library.js";
+import { configRouter } from "./config.js";
 
 export function createApiRouter(): Router {
   const api = Router();
@@ -13,6 +14,7 @@ export function createApiRouter(): Router {
 
   // Everything below requires a valid management session token.
   api.use(requireSession);
+  api.use("/config", configRouter);
   api.use("/kb", kbRouter);
   api.use("/embedding", embeddingRouter);
   api.use("/", libraryRouter);

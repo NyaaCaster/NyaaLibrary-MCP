@@ -70,3 +70,57 @@ export interface KnowledgeBase {
   document_count: number;
   chunk_count: number;
 }
+
+export interface DocumentRow {
+  id: string;
+  kb_id: string;
+  name: string;
+  ext: string;
+  size_bytes: number;
+  chunk_count: number;
+  uploaded_at: string;
+}
+
+export interface ChunkRow {
+  id: number;
+  doc_id: string;
+  kb_id: string;
+  seq: number;
+  content: string;
+  char_count: number;
+  vector_id: string;
+}
+
+export interface AppConfig {
+  supportedExtensions: string[];
+  maxFileSizeMb: number;
+  maxUploadCount: number;
+  chunk: { size: number; overlap: number };
+  batch: { size: number; concurrency: number; maxRetries: number };
+  retrieval: { topK: number };
+}
+
+/** Multipart upload (does not set Content-Type so the browser adds boundary). */
+export async function uploadDocuments(
+  kbId: string,
+  files: File[],
+  opts: { chunkSize?: number; chunkOverlap?: number } = {},
+): Promise<{ results: { filename: string; ok: boolean; error?: string; chunk_count?: number }[] }> {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  if (opts.chunkSize != null) form.append("chunk_size", String(opts.chunkSize));
+  if (opts.chunkOverlap != null)
+    form.append("chunk_overlap", String(opts.chunkOverlap));
+
+  const token = getToken();
+  const res = await fetch(`/api/kb/${kbId}/documents`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok && res.status !== 400) {
+    throw new ApiError(res.status, (data as { error?: string }).error ?? "上传失败");
+  }
+  return data as { results: { filename: string; ok: boolean; error?: string; chunk_count?: number }[] };
+}

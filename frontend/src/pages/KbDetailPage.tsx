@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { api, type KnowledgeBase } from "../lib/api";
 import { formatDateTime } from "../lib/format";
+import { DocumentsTab } from "./kb/DocumentsTab";
 
 type Tab = "overview" | "documents" | "retrieval" | "settings";
 
@@ -56,7 +57,9 @@ export function KbDetailPage() {
       </div>
 
       <div className="py-5">
-        {tab === "overview" ? <Overview kb={kb} /> : <ComingSoon />}
+        {tab === "overview" && <Overview kb={kb} />}
+        {tab === "documents" && <DocumentsTab kb={kb} />}
+        {(tab === "retrieval" || tab === "settings") && <ComingSoon />}
       </div>
     </div>
   );

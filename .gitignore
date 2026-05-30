@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 dist/
+# Local static-serving artifact (frontend build copied for `node dist` runs)
+server/public/
 
 # Runtime data (SQLite DB, vector store, uploads)
 data/

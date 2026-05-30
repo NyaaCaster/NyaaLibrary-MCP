@@ -76,14 +76,27 @@ libraryRouter.post(
     }
 
     const results = [];
+    // Optional per-upload chunk overrides (multipart text fields); fall back
+    // to the knowledge base's configured defaults.
+    const parseField = (v: unknown, fallback: number): number => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+    };
+    const body = req.body as Record<string, unknown>;
+    const chunkSize = parseField(body.chunk_size, kb.chunk_size);
+    const chunkOverlap = Math.min(
+      parseField(body.chunk_overlap, kb.chunk_overlap),
+      chunkSize - 1,
+    );
+
     for (const file of files) {
       try {
         const { document, chunk_count } = await ingestDocument({
           kbId: kb.id,
           filename: file.originalname,
           buffer: file.buffer,
-          chunkSize: kb.chunk_size,
-          chunkOverlap: kb.chunk_overlap,
+          chunkSize,
+          chunkOverlap,
         });
         results.push({ filename: file.originalname, ok: true, document, chunk_count });
       } catch (err) {
