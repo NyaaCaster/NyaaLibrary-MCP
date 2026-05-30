@@ -3,8 +3,11 @@
 # ---- Stage 1: build frontend (Vite → static assets) ----
 FROM node:20-slim AS frontend
 WORKDIR /app/frontend
+# maxsockets=1 forces serial downloads: Docker Desktop networking can stall on
+# concurrent large native-binary fetches (rollup/esbuild/@tailwindcss/oxide).
+ENV npm_config_maxsockets=1 npm_config_fetch_timeout=600000
 COPY frontend/package.json ./
-RUN npm install
+RUN npm install --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
