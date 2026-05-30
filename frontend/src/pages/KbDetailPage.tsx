@@ -5,6 +5,8 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { api, type KnowledgeBase } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import { DocumentsTab } from "./kb/DocumentsTab";
+import { RetrievalTab } from "./kb/RetrievalTab";
+import { SettingsTab } from "./kb/SettingsTab";
 
 type Tab = "overview" | "documents" | "retrieval" | "settings";
 
@@ -59,7 +61,8 @@ export function KbDetailPage() {
       <div className="py-5">
         {tab === "overview" && <Overview kb={kb} />}
         {tab === "documents" && <DocumentsTab kb={kb} />}
-        {(tab === "retrieval" || tab === "settings") && <ComingSoon />}
+        {tab === "retrieval" && <RetrievalTab kb={kb} />}
+        {tab === "settings" && <SettingsTab kb={kb} />}
       </div>
     </div>
   );
@@ -100,14 +103,6 @@ function Overview({ kb }: { kb: KnowledgeBase }) {
           </div>
         </div>
       </section>
-    </div>
-  );
-}
-
-function ComingSoon() {
-  return (
-    <div className="rounded-xl border border-dashed border-slate-300 py-16 text-center text-sm text-slate-400 dark:border-slate-700">
-      该功能将在后续里程碑（M2 / M3）实现。
     </div>
   );
 }

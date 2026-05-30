@@ -141,6 +141,9 @@ export function EmbeddingSettingsPage() {
               自动获取
             </button>
           </div>
+          <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
+            注意：更改嵌入维度会重建向量库，已索引的向量将失效，需重新上传文档。
+          </p>
         </Field>
 
         {message && (
