@@ -41,7 +41,7 @@ export function KbDetailPage() {
       </Link>
       <h1 className="text-xl font-semibold">{kb.name}</h1>
 
-      <div className="mt-4 flex gap-1 overflow-x-auto border-b border-slate-200 dark:border-slate-800">
+      <div className="mt-4 flex gap-1 border-b border-slate-200 dark:border-slate-800">
         {TABS.map((t) => (
           <button
             key={t.key}

@@ -84,6 +84,18 @@
 
 ---
 
+## 里程碑后迭代（维护）
+
+> M0–M4 完成后的蓝图外修改，按时间记录。
+
+- [x] rebuild 工序对齐 `Keeper_CoC-TRPG`：`rebuild.ps1` 用 `-p nyaalibrary-mcp` 锁定 compose 项目名、`down → build → 清理 dangling → up → 列表`、移除 `-NoCache` 开关；rebuild skill 重写（frontmatter、`-ExecutionPolicy Bypass`、缓存策略，清理 `nyaaframe`/40MB/registry 残留）（commit `a9b52a2`）
+- [x] 去除镜像仓库概念：删除 `meta.json` 的 `registry` 字段，明确「仅本地构建运行、不推送仓库」（commit `a9b52a2`）
+- [x] 浏览器标签页图标：新增 `frontend/public/favicon.svg`，复刻页头蓝色 Library logo（indigo-600 圆角方块 + 白色 lucide 图标）并在 `index.html` 引入（commit `1d684bc`）
+- [x] 逐文件上传进度列表：上传改为「每文件一请求」，实时显示 待上传 / 导入中 / 成功(N 分块) / 失败(原因) 状态，表格随成功项渐进刷新，支持「重试未成功」（commit `3fda8b9`）
+- [x] 修复知识库详情标签栏多余滚动条：移除标签栏 `overflow-x-auto`（`overflow-x:auto` 会令 `overflow-y` 计算为 `auto`，叠加标签 `-mb-px` 的 1px 竖向溢出而出现滚动条与额外高度）
+
+---
+
 ## 变更日志
 
 | 日期       | 里程碑 | 变更内容                                                   |
@@ -93,3 +105,8 @@
 | 2026-05-31 | M2     | 文档管理 UI：上传界面、搜索过滤、可排序分页表、文档/分块详情、删除；config 接口 |
 | 2026-05-31 | M3     | 检索测试 UI（相关度分数）、知识库设置（分块/稠密/稀疏）、嵌入设置打磨 |
 | 2026-05-31 | M4     | 响应式打磨、Docker 构建修复（串行下载）、部署与持久化验证、文档完善 |
+| 2026-05-31 | 维护   | rebuild 工序对齐 Keeper（项目名锁定 / down→build→up）、移除 -NoCache、重写 rebuild skill |
+| 2026-05-31 | 维护   | 删除 meta.json registry 字段（仅本地构建运行，不推送仓库） |
+| 2026-05-31 | 维护   | 新增 Library logo favicon（浏览器标签页图标） |
+| 2026-05-31 | 维护   | 逐文件上传进度列表（每文件一请求，实时状态 + 重试未成功） |
+| 2026-05-31 | 维护   | 修复知识库详情标签栏多余滚动条（移除 overflow-x-auto） |
