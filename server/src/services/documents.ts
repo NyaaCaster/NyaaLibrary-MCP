@@ -52,7 +52,7 @@ function dropChunkIndexes(chunkIds: number[]): void {
   for (const cid of chunkIds) {
     db.prepare("DELETE FROM chunks_fts WHERE rowid = ?").run(cid);
     if (vecTableExists()) {
-      db.prepare("DELETE FROM vec_chunks WHERE rowid = ?").run(cid);
+      db.prepare("DELETE FROM vec_chunks WHERE rowid = ?").run(BigInt(cid));
     }
   }
 }

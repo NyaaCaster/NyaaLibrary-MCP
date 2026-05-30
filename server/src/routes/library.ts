@@ -1,4 +1,5 @@
 import { Router } from "express";
+import multer, { MulterError } from "multer";
 import { z } from "zod";
 import { getKnowledgeBase } from "../services/kb.js";
 import {
@@ -10,11 +11,25 @@ import {
   listDocuments,
 } from "../services/documents.js";
 import { searchKnowledgeBase } from "../services/retrieval.js";
-import { NotImplementedError } from "../services/ingest.js";
-import { config } from "../config.js";
+import { ingestDocument } from "../services/ingest.js";
+import { isSupported } from "../parsers/index.js";
+import { config, SUPPORTED_EXTENSIONS } from "../config.js";
 
 // KB-scoped document/chunk/retrieval endpoints, mounted at /api.
 export const libraryRouter = Router();
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: config.upload.maxFileSizeMb * 1024 * 1024,
+    files: config.upload.maxUploadCount,
+  },
+  fileFilter: (_req, file, cb) => {
+    // Some clients send non-ASCII filenames as latin1; decode to UTF-8.
+    file.originalname = Buffer.from(file.originalname, "latin1").toString("utf8");
+    cb(null, isSupported(file.originalname));
+  },
+});
 
 libraryRouter.get("/kb/:kbId/documents", (req, res) => {
   if (!getKnowledgeBase(req.params.kbId)) {
@@ -24,11 +39,65 @@ libraryRouter.get("/kb/:kbId/documents", (req, res) => {
   res.json(listDocuments(req.params.kbId));
 });
 
-// Upload + ingestion — implemented in M1.
-libraryRouter.post("/kb/:kbId/documents", (_req, res) => {
-  const err = new NotImplementedError();
-  res.status(err.status).json({ error: err.message });
-});
+// Upload + ingest one or more documents (multipart field "files").
+libraryRouter.post(
+  "/kb/:kbId/documents",
+  (req, res, next) => {
+    upload.array("files", config.upload.maxUploadCount)(req, res, (err) => {
+      if (err instanceof MulterError) {
+        const msg =
+          err.code === "LIMIT_FILE_SIZE"
+            ? `单个文件超过上限 ${config.upload.maxFileSizeMb}MB`
+            : err.code === "LIMIT_FILE_COUNT"
+              ? `单次最多上传 ${config.upload.maxUploadCount} 个文件`
+              : err.message;
+        res.status(400).json({ error: msg });
+        return;
+      }
+      if (err) {
+        res.status(400).json({ error: (err as Error).message });
+        return;
+      }
+      next();
+    });
+  },
+  async (req, res) => {
+    const kb = getKnowledgeBase(req.params.kbId);
+    if (!kb) {
+      res.status(404).json({ error: "知识库不存在" });
+      return;
+    }
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    if (files.length === 0) {
+      res.status(400).json({
+        error: `未收到有效文件（支持的格式：${SUPPORTED_EXTENSIONS.join(", ")}）`,
+      });
+      return;
+    }
+
+    const results = [];
+    for (const file of files) {
+      try {
+        const { document, chunk_count } = await ingestDocument({
+          kbId: kb.id,
+          filename: file.originalname,
+          buffer: file.buffer,
+          chunkSize: kb.chunk_size,
+          chunkOverlap: kb.chunk_overlap,
+        });
+        results.push({ filename: file.originalname, ok: true, document, chunk_count });
+      } catch (err) {
+        results.push({
+          filename: file.originalname,
+          ok: false,
+          error: (err as Error).message,
+        });
+      }
+    }
+    const anyOk = results.some((r) => r.ok);
+    res.status(anyOk ? 201 : 400).json({ results });
+  },
+);
 
 const searchSchema = z.object({
   query: z.string().min(1),

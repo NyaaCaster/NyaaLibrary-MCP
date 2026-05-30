@@ -1,4 +1,6 @@
 import { getEmbeddingSettings } from "./settings.js";
+import { config } from "../config.js";
+import pLimit from "p-limit";
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
@@ -47,4 +49,50 @@ export async function detectDimension(): Promise<number> {
     throw new Error("无法从嵌入接口响应中解析维度");
   }
   return vec.length;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function embedBatchWithRetry(
+  texts: string[],
+  maxRetries: number,
+): Promise<number[][]> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await embedTexts(texts);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxRetries) await sleep(500 * (attempt + 1));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+/**
+ * Embed many texts: split into BATCH_SIZE batches, run up to CONCURRENCY_LIMIT
+ * batches in parallel, retry each batch up to MAX_RETRIES. Order is preserved.
+ */
+export async function embedMany(texts: string[]): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  const { size, concurrency, maxRetries } = config.batch;
+  const limit = pLimit(Math.max(1, concurrency));
+
+  const batches: { start: number; texts: string[] }[] = [];
+  for (let i = 0; i < texts.length; i += Math.max(1, size)) {
+    batches.push({ start: i, texts: texts.slice(i, i + Math.max(1, size)) });
+  }
+
+  const result = new Array<number[]>(texts.length);
+  await Promise.all(
+    batches.map((batch) =>
+      limit(async () => {
+        const vectors = await embedBatchWithRetry(batch.texts, maxRetries);
+        vectors.forEach((v, j) => {
+          result[batch.start + j] = v;
+        });
+      }),
+    ),
+  );
+  return result;
 }

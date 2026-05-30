@@ -7,8 +7,8 @@
 | #  | 里程碑                 | 状态 | 完成日期   |
 | -- | ---------------------- | ---- | ---------- |
 | M0 | 初始化与基础骨架       | ✅   | 2026-05-31 |
-| M1 | 文档摄取管线           | 🟡   | —          |
-| M2 | 知识库与文档管理 UI    | ⬜   | —          |
+| M1 | 文档摄取管线           | ✅   | 2026-05-31 |
+| M2 | 知识库与文档管理 UI    | 🟡   | —          |
 | M3 | 检索与嵌入配置         | ⬜   | —          |
 | M4 | 打磨与部署             | ⬜   | —          |
 
@@ -34,18 +34,20 @@
 
 ---
 
-## M1 — 文档摄取管线 🟡
+## M1 — 文档摄取管线 ✅ _完成于 2026-05-31_
 
-- [ ] 文件上传：multer，校验大小（`MAX_FILE_SIZE_MB`）与数量（`MAX_UPLOAD_COUNT`）、扩展名白名单
-- [ ] 解析器：`.txt` / `.md`（原生）、`.pdf`（pdf-parse）、`.docx`（mammoth）、`.epub`、`.xls` / `.xlsx`（xlsx）
-- [ ] 分块：按 `chunk_size` 切分、`chunk_overlap` 重叠
-- [ ] 嵌入：OpenAI 兼容 `/embeddings`，批处理（`BATCH_SIZE`）、并发限制（`CONCURRENCY_LIMIT`）、失败重试（`MAX_RETRIES`）
-- [ ] 落库：写入 `chunks` + `vec_chunks`（稠密）+ `chunks_fts`（稀疏），更新文档分块数
-- [ ] 上传进度 / 错误反馈
+- [x] 文件上传：multer（memoryStorage），校验大小（`MAX_FILE_SIZE_MB`）与数量（`MAX_UPLOAD_COUNT`）、扩展名白名单、非 ASCII 文件名 UTF-8 解码
+- [x] 解析器：`.txt` / `.md`（原生）、`.pdf`（pdf-parse）、`.docx`（mammoth）、`.epub`（adm-zip + OPF spine）、`.xls` / `.xlsx`（SheetJS xlsx，CDN 版）
+- [x] 分块：按 `chunk_size` 切分、`chunk_overlap` 重叠（`services/chunk.ts`）
+- [x] 嵌入：OpenAI 兼容 `/embeddings`，批处理（`BATCH_SIZE`）、并发限制（`CONCURRENCY_LIMIT`，p-limit）、失败重试（`MAX_RETRIES`，退避）
+- [x] 落库：事务写入 `chunks` + `vec_chunks`（稠密，rowid 以 BigInt 绑定）+ `chunks_fts`（稀疏），更新文档分块数；嵌入先于事务，保证全有或全无
+- [x] 上传逐文件成功/失败反馈（multipart `files`，多文件）
+- [x] 修复 sqlite-vec KNN：`k = ?` 约束 + CTE，先 KNN 再 join 过滤 kb_id
+- [x] 端到端验证：上传（txt/md/docx/xlsx/epub）→ 分块 → 嵌入 → 检索（/api 与 MCP）→ 级联删除
 
 ---
 
-## M2 — 知识库与文档管理 UI ⬜
+## M2 — 知识库与文档管理 UI 🟡
 
 - [ ] 知识库详情：概述（基本信息 + 统计）已有，补充完善
 - [ ] 文档管理：上传界面（拖放区、分块设置、批处理设置）
@@ -82,3 +84,4 @@
 | 日期       | 里程碑 | 变更内容                                                   |
 | ---------- | ------ | ---------------------------------------------------------- |
 | 2026-05-31 | M0     | 项目初始化、monorepo 重构、后端骨架、前端骨架、Docker、首次推送 |
+| 2026-05-31 | M1     | 文档摄取管线：上传/解析(txt/md/pdf/docx/epub/xls/xlsx)/分块/嵌入/落库，混合检索打通 |

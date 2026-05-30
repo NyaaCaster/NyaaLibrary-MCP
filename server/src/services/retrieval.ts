@@ -34,16 +34,22 @@ export async function searchKnowledgeBase(
     try {
       const [embedding] = await embedTexts([q]);
       if (embedding) {
+        // sqlite-vec KNN needs an explicit `k = ?` on the vec table; do the
+        // KNN in a CTE, then join + filter by kb_id in the outer query.
         const rows = db
           .prepare(
-            `SELECT v.rowid AS chunk_id
-               FROM vec_chunks v
-               JOIN chunks c ON c.id = v.rowid
-              WHERE c.kb_id = ? AND v.embedding MATCH ?
-              ORDER BY v.distance
-              LIMIT ?`,
+            `WITH knn AS (
+               SELECT rowid AS chunk_id, distance
+               FROM vec_chunks
+               WHERE embedding MATCH ? AND k = ?
+             )
+             SELECT knn.chunk_id AS chunk_id
+               FROM knn
+               JOIN chunks c ON c.id = knn.chunk_id
+              WHERE c.kb_id = ?
+              ORDER BY knn.distance`,
           )
-          .all(kb.id, JSON.stringify(embedding), kb.dense_top_k) as {
+          .all(JSON.stringify(embedding), kb.dense_top_k, kb.id) as {
           chunk_id: number;
         }[];
         rows.forEach((r, i) => denseRanks.set(r.chunk_id, i + 1));

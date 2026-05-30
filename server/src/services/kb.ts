@@ -124,7 +124,7 @@ export function deleteKnowledgeBase(id: string): boolean {
     for (const { id: cid } of chunkIds) {
       db.prepare("DELETE FROM chunks_fts WHERE rowid = ?").run(cid);
       try {
-        db.prepare("DELETE FROM vec_chunks WHERE rowid = ?").run(cid);
+        db.prepare("DELETE FROM vec_chunks WHERE rowid = ?").run(BigInt(cid));
       } catch {
         /* vec table may not exist yet */
       }
