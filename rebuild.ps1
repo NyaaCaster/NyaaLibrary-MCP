@@ -1,31 +1,23 @@
-param(
-    [switch]$NoCache
-)
-
 $ErrorActionPreference = "Stop"
 $COMPOSE_FILE = "docker-compose.yml"
-$env:DOCKER_BUILDKIT = "1"
-$env:COMPOSE_DOCKER_CLI_BUILD = "1"
+$PROJECT = "nyaalibrary-mcp"
 
-if ($NoCache) {
-    Write-Host "Building image (no cache)..." -ForegroundColor Cyan
-    docker compose -f $COMPOSE_FILE build --no-cache
-} else {
-    Write-Host "Building image (using cache)..." -ForegroundColor Cyan
-    docker compose -f $COMPOSE_FILE build
-}
+# Build the image and run the container locally — no registry tag/push.
+# `-p $PROJECT` pins the compose project name so this only ever touches this
+# project's container/network, never the other containers on the host.
 
-# `up -d` recreates the container only when image hash or service
-# config changed; volumes are preserved automatically.
-Write-Host "Starting containers..." -ForegroundColor Cyan
-docker compose -f $COMPOSE_FILE up -d
+Write-Host "Stopping containers..." -ForegroundColor Cyan
+docker compose -p $PROJECT -f $COMPOSE_FILE down
 
-# Cleanup AFTER recreation — before recreation the old image is still
-# held by the running container and `docker rmi` would fail with
-# "image is being used".
+Write-Host "Building image..." -ForegroundColor Cyan
+docker compose -p $PROJECT -f $COMPOSE_FILE build
+
 Write-Host "Removing dangling images..." -ForegroundColor Cyan
 $dangling = docker images -f "dangling=true" -q
 if ($dangling) { docker rmi -f $dangling }
+
+Write-Host "Starting containers..." -ForegroundColor Cyan
+docker compose -p $PROJECT -f $COMPOSE_FILE up -d
 
 Write-Host "Done. Running containers:" -ForegroundColor Green
 docker ps --format "table {{.Names}}`t{{.Status}}`t{{.Ports}}"
