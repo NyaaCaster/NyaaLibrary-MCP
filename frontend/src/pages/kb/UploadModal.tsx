@@ -1,6 +1,13 @@
 import { useRef, useState, type DragEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, UploadCloud, X } from "lucide-react";
+import {
+  CheckCircle2,
+  Clock,
+  Loader2,
+  UploadCloud,
+  X,
+  XCircle,
+} from "lucide-react";
 import {
   api,
   uploadDocuments,
@@ -11,11 +18,14 @@ import { Modal, btn, input } from "../../components/Modal";
 import { FileIcon } from "../../components/FileIcon";
 import { formatSize } from "../../lib/format";
 
-interface Result {
-  filename: string;
-  ok: boolean;
+type Status = "pending" | "processing" | "success" | "error";
+
+interface Entry {
+  id: string;
+  file: File;
+  status: Status;
+  chunkCount?: number;
   error?: string;
-  chunk_count?: number;
 }
 
 export function UploadModal({
@@ -32,35 +42,45 @@ export function UploadModal({
     queryFn: () => api.get<AppConfig>("/config"),
   });
   const inputRef = useRef<HTMLInputElement>(null);
-  const [files, setFiles] = useState<File[]>([]);
+  const [entries, setEntries] = useState<Entry[]>([]);
   const [dragging, setDragging] = useState(false);
   const [chunkSize, setChunkSize] = useState(kb.chunk_size);
   const [chunkOverlap, setChunkOverlap] = useState(kb.chunk_overlap);
   const [uploading, setUploading] = useState(false);
-  const [results, setResults] = useState<Result[] | null>(null);
   const [error, setError] = useState("");
 
   const exts = cfg?.supportedExtensions ?? [];
   const maxCount = cfg?.maxUploadCount ?? 10;
   const maxMb = cfg?.maxFileSizeMb ?? 128;
 
+  const setStatus = (id: string, patch: Partial<Entry>) =>
+    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return;
     setError("");
-    const next = [...files];
-    for (const f of Array.from(incoming)) {
-      const ext = "." + f.name.split(".").pop()?.toLowerCase();
-      if (exts.length && !exts.includes(ext)) {
-        setError(`不支持的格式：${f.name}`);
-        continue;
+    setEntries((prev) => {
+      const next = [...prev];
+      for (const f of Array.from(incoming)) {
+        const ext = "." + (f.name.split(".").pop()?.toLowerCase() ?? "");
+        if (exts.length && !exts.includes(ext)) {
+          setError(`不支持的格式：${f.name}`);
+          continue;
+        }
+        if (f.size > maxMb * 1024 * 1024) {
+          setError(`${f.name} 超过 ${maxMb}MB`);
+          continue;
+        }
+        if (next.some((e) => e.file.name === f.name && e.file.size === f.size))
+          continue;
+        if (next.length >= maxCount) {
+          setError(`单次最多上传 ${maxCount} 个文件`);
+          break;
+        }
+        next.push({ id: `${f.name}-${f.size}-${f.lastModified}`, file: f, status: "pending" });
       }
-      if (f.size > maxMb * 1024 * 1024) {
-        setError(`${f.name} 超过 ${maxMb}MB`);
-        continue;
-      }
-      if (!next.some((x) => x.name === f.name && x.size === f.size)) next.push(f);
-    }
-    setFiles(next.slice(0, maxCount));
+      return next;
+    });
   };
 
   const onDrop = (e: DragEvent) => {
@@ -69,24 +89,41 @@ export function UploadModal({
     addFiles(e.dataTransfer.files);
   };
 
+  // Upload one request per file so each row reflects its own progress.
   const submit = async () => {
-    if (files.length === 0) return;
+    const targets = entries.filter((e) => e.status === "pending" || e.status === "error");
+    if (targets.length === 0) return;
     setUploading(true);
     setError("");
-    try {
-      const { results: r } = await uploadDocuments(kb.id, files, {
-        chunkSize,
-        chunkOverlap,
-      });
-      setResults(r);
-      if (r.some((x) => x.ok)) onUploaded();
-      if (r.every((x) => x.ok)) setFiles([]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "上传失败");
-    } finally {
-      setUploading(false);
+    let anySuccess = false;
+    for (const entry of targets) {
+      setStatus(entry.id, { status: "processing", error: undefined });
+      try {
+        const { results } = await uploadDocuments(kb.id, [entry.file], {
+          chunkSize,
+          chunkOverlap,
+        });
+        const r = results[0];
+        if (r?.ok) {
+          setStatus(entry.id, { status: "success", chunkCount: r.chunk_count });
+          anySuccess = true;
+          onUploaded(); // refresh the documents table progressively
+        } else {
+          setStatus(entry.id, { status: "error", error: r?.error ?? "导入失败" });
+        }
+      } catch (e) {
+        setStatus(entry.id, { status: "error", error: e instanceof Error ? e.message : "导入失败" });
+      }
     }
+    setUploading(false);
+    if (anySuccess) onUploaded();
   };
+
+  const total = entries.length;
+  const processed = entries.filter((e) => e.status === "success" || e.status === "error").length;
+  const pendingCount = entries.filter((e) => e.status === "pending" || e.status === "error").length;
+  const hasError = entries.some((e) => e.status === "error");
+  const allDone = total > 0 && entries.every((e) => e.status === "success");
 
   return (
     <Modal
@@ -97,15 +134,19 @@ export function UploadModal({
       footer={
         <>
           <button className={btn.ghost} onClick={onClose}>
-            关闭
+            {allDone ? "完成" : "关闭"}
           </button>
           <button
             className={`${btn.primary} flex items-center gap-2`}
-            disabled={uploading || files.length === 0}
+            disabled={uploading || pendingCount === 0}
             onClick={submit}
           >
             {uploading && <Loader2 size={16} className="animate-spin" />}
-            上传 {files.length > 0 && `(${files.length})`}
+            {uploading
+              ? `上传中 ${processed}/${total}`
+              : hasError
+                ? `重试未成功 (${pendingCount})`
+                : `上传 (${pendingCount})`}
           </button>
         </>
       }
@@ -141,22 +182,30 @@ export function UploadModal({
         </p>
       </div>
 
-      {files.length > 0 && (
+      {total > 0 && (
         <ul className="mt-3 space-y-1">
-          {files.map((f) => (
+          {entries.map((e) => (
             <li
-              key={f.name + f.size}
+              key={e.id}
               className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm dark:bg-slate-800/50"
             >
-              <FileIcon ext={"." + (f.name.split(".").pop() ?? "")} />
-              <span className="flex-1 truncate">{f.name}</span>
-              <span className="text-xs text-slate-400">{formatSize(f.size)}</span>
-              <button
-                onClick={() => setFiles(files.filter((x) => x !== f))}
-                className="text-slate-400 hover:text-rose-500"
-              >
-                <X size={15} />
-              </button>
+              <FileIcon ext={"." + (e.file.name.split(".").pop() ?? "")} />
+              <span className="flex-1 truncate" title={e.file.name}>
+                {e.file.name}
+              </span>
+              <StatusBadge entry={e} />
+              <span className="w-16 shrink-0 text-right text-xs text-slate-400">
+                {formatSize(e.file.size)}
+              </span>
+              {!uploading && e.status !== "processing" && (
+                <button
+                  onClick={() => setEntries((prev) => prev.filter((x) => x.id !== e.id))}
+                  className="text-slate-400 hover:text-rose-500"
+                  title="移除"
+                >
+                  <X size={15} />
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -175,18 +224,37 @@ export function UploadModal({
       </div>
 
       {error && <p className="mt-3 text-sm text-rose-600">{error}</p>}
-      {results && (
-        <ul className="mt-3 space-y-1 text-sm">
-          {results.map((r) => (
-            <li key={r.filename} className={r.ok ? "text-emerald-600" : "text-rose-600"}>
-              {r.ok ? "✓" : "✗"} {r.filename}
-              {r.ok ? `（${r.chunk_count} 分块）` : `：${r.error}`}
-            </li>
-          ))}
-        </ul>
-      )}
     </Modal>
   );
+}
+
+function StatusBadge({ entry }: { entry: Entry }) {
+  switch (entry.status) {
+    case "pending":
+      return (
+        <span className="flex items-center gap-1 text-xs text-slate-400">
+          <Clock size={14} /> 待上传
+        </span>
+      );
+    case "processing":
+      return (
+        <span className="flex items-center gap-1 text-xs text-indigo-500">
+          <Loader2 size={14} className="animate-spin" /> 导入中…
+        </span>
+      );
+    case "success":
+      return (
+        <span className="flex items-center gap-1 text-xs text-emerald-600">
+          <CheckCircle2 size={14} /> {entry.chunkCount} 分块
+        </span>
+      );
+    case "error":
+      return (
+        <span className="flex items-center gap-1 text-xs text-rose-600" title={entry.error}>
+          <XCircle size={14} /> <span className="max-w-[10rem] truncate">{entry.error}</span>
+        </span>
+      );
+  }
 }
 
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
