@@ -16,7 +16,7 @@ export function registerKnowledgeBaseTools(server: McpServer): void {
       inputSchema: {},
     },
     async () => {
-      const kbs = listKnowledgeBases();
+      const kbs = listKnowledgeBases({ onlyEnabled: true });
       if (kbs.length === 0) {
         return { content: [{ type: "text", text: "（暂无知识库）" }] };
       }
@@ -60,6 +60,17 @@ export function registerKnowledgeBaseTools(server: McpServer): void {
           isError: true,
           content: [
             { type: "text", text: `找不到知识库："${knowledge_base}"` },
+          ],
+        };
+      }
+      if (!kb.enabled) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `知识库「${kb.name}」已被禁用，暂不可检索。`,
+            },
           ],
         };
       }

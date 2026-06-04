@@ -22,6 +22,23 @@ export function KnowledgeBasesPage() {
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["kbs"] });
 
+  const toggleEnabled = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api.patch<KnowledgeBase>(`/kb/${id}`, { enabled }),
+    onMutate: async ({ id, enabled }) => {
+      await qc.cancelQueries({ queryKey: ["kbs"] });
+      const prev = qc.getQueryData<KnowledgeBase[]>(["kbs"]);
+      qc.setQueryData<KnowledgeBase[]>(["kbs"], (old) =>
+        old?.map((k) => (k.id === id ? { ...k, enabled: enabled ? 1 : 0 } : k)),
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["kbs"], ctx.prev);
+    },
+    onSettled: refresh,
+  });
+
   return (
     <div>
       <div className="mb-5 flex items-center justify-between">
@@ -62,7 +79,10 @@ export function KnowledgeBasesPage() {
             className="group flex flex-col rounded-xl border border-slate-200 bg-white p-5 transition hover:border-indigo-300 hover:shadow-sm dark:border-slate-800 dark:bg-slate-900"
           >
             <div className="flex items-start justify-between gap-2">
-              <Link to={`/kb/${kb.id}`} className="min-w-0 flex-1">
+              <Link
+                to={`/kb/${kb.id}`}
+                className={`min-w-0 flex-1 transition ${kb.enabled ? "" : "opacity-50"}`}
+              >
                 <h3 className="truncate font-medium hover:text-indigo-600">
                   {kb.name}
                 </h3>
@@ -89,13 +109,31 @@ export function KnowledgeBasesPage() {
                 </button>
               </div>
             </div>
-            <div className="mt-4 flex gap-4 text-sm text-slate-500">
-              <span className="flex items-center gap-1">
-                <FileText size={14} /> {kb.document_count} 文档
-              </span>
-              <span className="flex items-center gap-1">
-                <Layers size={14} /> {kb.chunk_count} 分块
-              </span>
+            <div className="mt-4 flex items-center justify-between">
+              <div
+                className={`flex gap-4 text-sm text-slate-500 transition ${kb.enabled ? "" : "opacity-50"}`}
+              >
+                <span className="flex items-center gap-1">
+                  <FileText size={14} /> {kb.document_count} 文档
+                </span>
+                <span className="flex items-center gap-1">
+                  <Layers size={14} /> {kb.chunk_count} 分块
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`text-xs font-medium ${kb.enabled ? "text-indigo-600 dark:text-indigo-400" : "text-slate-400"}`}
+                >
+                  {kb.enabled ? "已启用" : "已禁用"}
+                </span>
+                <Switch
+                  checked={Boolean(kb.enabled)}
+                  disabled={toggleEnabled.isPending}
+                  onChange={() =>
+                    toggleEnabled.mutate({ id: kb.id, enabled: !kb.enabled })
+                  }
+                />
+              </div>
             </div>
           </div>
         ))}
@@ -240,5 +278,36 @@ function DeleteKbModal({
         其下 {kb.document_count} 个文档与 {kb.chunk_count} 个分块将一并永久删除，此操作不可恢复。
       </p>
     </Modal>
+  );
+}
+
+/** Accessible on/off toggle for a knowledge base's MCP exposure. */
+function Switch({
+  checked,
+  onChange,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={onChange}
+      title={checked ? "已启用（点击禁用）" : "已禁用（点击启用）"}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition disabled:opacity-50 ${
+        checked ? "bg-indigo-600" : "bg-slate-300 dark:bg-slate-600"
+      }`}
+    >
+      <span
+        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition ${
+          checked ? "translate-x-[18px]" : "translate-x-[3px]"
+        }`}
+      />
+    </button>
   );
 }

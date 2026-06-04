@@ -52,7 +52,7 @@ docker compose -p nyaalibrary-mcp -f docker-compose.yml up -d
 
 ## 执行后汇报
 
-简要告知：脚本是否成功、容器是否 Up、对外端口（`5101`）与访问地址（`http://localhost:5101`，MCP 端点 `/mcp`）。
+简要告知：脚本是否成功、容器是否 Up、对外端口（`5106`，映射到容器内 `5101`）与访问地址（`http://localhost:5106`，MCP 端点 `/mcp`）。
 
 ## 不要做的事
 

@@ -11,7 +11,7 @@ services:
       - DATA_DIR=/app/data
       - TZ=Asia/Shanghai
     ports:
-      - "5101:5101"
+      - "5106:5101"
     volumes:
       - ./data:/app/data
     restart: unless-stopped

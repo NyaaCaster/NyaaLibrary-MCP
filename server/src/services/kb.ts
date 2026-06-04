@@ -10,6 +10,8 @@ export interface KnowledgeBase {
   chunk_overlap: number;
   dense_top_k: number;
   sparse_top_k: number;
+  /** 1 = exposed to MCP clients, 0 = hidden from search/list over MCP. */
+  enabled: number;
   created_at: string;
   updated_at: string;
 }
@@ -30,9 +32,12 @@ const statsSelect = `
   FROM knowledge_bases kb
 `;
 
-export function listKnowledgeBases(): KnowledgeBaseWithStats[] {
+export function listKnowledgeBases(
+  opts: { onlyEnabled?: boolean } = {},
+): KnowledgeBaseWithStats[] {
+  const where = opts.onlyEnabled ? "WHERE kb.enabled = 1" : "";
   return db
-    .prepare(`${statsSelect} ORDER BY kb.created_at DESC`)
+    .prepare(`${statsSelect} ${where} ORDER BY kb.created_at DESC`)
     .all() as KnowledgeBaseWithStats[];
 }
 
@@ -64,8 +69,8 @@ export function createKnowledgeBase(
   const ts = nowIso();
   db.prepare(
     `INSERT INTO knowledge_bases
-       (id, name, description, chunk_size, chunk_overlap, dense_top_k, sparse_top_k, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, name, description, chunk_size, chunk_overlap, dense_top_k, sparse_top_k, enabled, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     name,
@@ -74,6 +79,7 @@ export function createKnowledgeBase(
     config.chunk.overlap,
     config.retrieval.denseTopK,
     config.retrieval.sparseTopK,
+    1,
     ts,
     ts,
   );
@@ -91,6 +97,7 @@ export function updateKnowledgeBase(
       | "chunk_overlap"
       | "dense_top_k"
       | "sparse_top_k"
+      | "enabled"
     >
   >,
 ): KnowledgeBaseWithStats | null {
@@ -100,7 +107,7 @@ export function updateKnowledgeBase(
   db.prepare(
     `UPDATE knowledge_bases SET
        name = ?, description = ?, chunk_size = ?, chunk_overlap = ?,
-       dense_top_k = ?, sparse_top_k = ?, updated_at = ?
+       dense_top_k = ?, sparse_top_k = ?, enabled = ?, updated_at = ?
      WHERE id = ?`,
   ).run(
     merged.name,
@@ -109,6 +116,7 @@ export function updateKnowledgeBase(
     merged.chunk_overlap,
     merged.dense_top_k,
     merged.sparse_top_k,
+    merged.enabled,
     merged.updated_at,
     id,
   );

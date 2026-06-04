@@ -65,6 +65,7 @@ export interface KnowledgeBase {
   chunk_overlap: number;
   dense_top_k: number;
   sparse_top_k: number;
+  enabled: number;
   created_at: string;
   updated_at: string;
   document_count: number;

@@ -28,6 +28,7 @@ db.exec(`
     chunk_overlap INTEGER NOT NULL,
     dense_top_k  INTEGER NOT NULL,
     sparse_top_k INTEGER NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
   );
@@ -67,7 +68,23 @@ db.exec(`
   );
 `);
 
-// ---- Lazy dense vector table -----------------------------------------------
+// ---- Migrations ------------------------------------------------------------
+// `CREATE TABLE IF NOT EXISTS` leaves pre-existing tables untouched, so columns
+// added after a DB was first created must be backfilled with ALTER TABLE.
+function addColumnIfMissing(table: string, column: string, ddl: string): void {
+  const cols = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl};`);
+  }
+}
+
+addColumnIfMissing(
+  "knowledge_bases",
+  "enabled",
+  "enabled INTEGER NOT NULL DEFAULT 1",
+);
 // sqlite-vec virtual tables require a fixed dimension at creation time, which
 // is only known once an embedding model is configured. We create it lazily and
 // record the active dimension so retrieval can guard against a missing table.

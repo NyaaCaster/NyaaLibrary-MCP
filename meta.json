@@ -5,7 +5,7 @@
   "repository": "https://github.com/NyaaCaster/NyaaLibrary-MCP.git",
   "stack": ["Node", "Express", "MCP-SDK", "SQLite", "sqlite-vec", "FTS5", "Vite", "React", "TypeScript", "Tailwind", "Docker"],
   "container": "nyaalibrary-mcp",
-  "port": "5101:5101",
+  "port": "5106:5101",
   "branch": "master",
   "license": "AGPL-3.0",
   "blessing": "Nyaa be with you."

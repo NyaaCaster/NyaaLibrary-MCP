@@ -80,7 +80,7 @@
 - [x] README 部署 / 持久化说明完善
 - [ ] 镜像推送私有仓库（按用户选择暂跳过，部署用 `rebuild.ps1` 本地构建）
 
-> 镜像推送为可选项；当前以本地构建（`rebuild.ps1` / `docker compose`）方式部署，端口 5101、数据落地 `./data`。
+> 镜像推送为可选项；当前以本地构建（`rebuild.ps1` / `docker compose`）方式部署，对外端口 5106（容器内仍 5101）、数据落地 `./data`。
 
 ---
 
@@ -93,6 +93,8 @@
 - [x] 浏览器标签页图标：新增 `frontend/public/favicon.svg`，复刻页头蓝色 Library logo（indigo-600 圆角方块 + 白色 lucide 图标）并在 `index.html` 引入（commit `1d684bc`）
 - [x] 逐文件上传进度列表：上传改为「每文件一请求」，实时显示 待上传 / 导入中 / 成功(N 分块) / 失败(原因) 状态，表格随成功项渐进刷新，支持「重试未成功」（commit `3fda8b9`）
 - [x] 修复知识库详情标签栏多余滚动条：移除标签栏 `overflow-x-auto`（`overflow-x:auto` 会令 `overflow-y` 计算为 `auto`，叠加标签 `-mb-px` 的 1px 竖向溢出而出现滚动条与额外高度）
+- [x] 库级启用/禁用开关：`knowledge_bases` 新增 `enabled` 列（默认 1，幂等 ALTER 迁移）；MCP `list_knowledge_bases` 仅列启用库、`search_knowledge_base` 对禁用库返回「已禁用」提示；REST `PATCH /kb/:id` 接受 `enabled` 布尔；前端知识库卡片新增开关（乐观更新、禁用态弱化 + 「已启用/已禁用」标签）。管理控制台检索测试不受限
+- [x] 对外端口 5101→5106：`docker-compose.yml` 宿主端口映射改 `5106:5101`（容器内应用仍监听 5101，`APP_PORT` / `EXPOSE` / 本地 dev 不变，因宿主 5101 被其它容器占用）；同步 `meta.json` / README / BLUEPRINT 中的对外访问端口
 
 ---
 
@@ -110,3 +112,5 @@
 | 2026-05-31 | 维护   | 新增 Library logo favicon（浏览器标签页图标） |
 | 2026-05-31 | 维护   | 逐文件上传进度列表（每文件一请求，实时状态 + 重试未成功） |
 | 2026-05-31 | 维护   | 修复知识库详情标签栏多余滚动条（移除 overflow-x-auto） |
+| 2026-06-04 | 维护   | 库级启用/禁用开关（enabled 列 + 迁移、MCP 过滤、PATCH 接口、前端卡片开关） |
+| 2026-06-04 | 维护   | 对外端口改 5106（宿主 5101 被占；compose 映射 5106:5101，容器内仍 5101） |
