@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # ---- Stage 1: build frontend (Vite → static assets) ----
 FROM node:20-slim AS frontend
 WORKDIR /app/frontend

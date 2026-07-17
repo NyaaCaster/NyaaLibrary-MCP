@@ -157,16 +157,12 @@ def _cleanup_registry(host: str, image: str, current_sha: str) -> None:
             if tag in ("latest", current_sha):
                 continue
             try:
-                get_req = request.Request(
-                    f"{base}/{tag}",
-                    headers={"Accept": "application/vnd.docker.distribution.manifest.v2+json"},
-                )
-                get_resp = request.urlopen(get_req, timeout=10)
-                digest = get_resp.headers.get("Docker-Content-Digest", "")
-                if digest:
-                    del_req = request.Request(f"{base}/{digest}", method="DELETE")
-                    request.urlopen(del_req, timeout=10)
-                    print(f"  Deleted: {image}:{tag} ({digest[:19]}...)")
+                # Delete by tag reference (not digest) to avoid wiping other
+                # tags that share the same digest (e.g. latest + current SHA
+                # when image contents haven't changed).
+                del_req = request.Request(f"{base}/{tag}", method="DELETE")
+                request.urlopen(del_req, timeout=10)
+                print(f"  Deleted: {image}:{tag}")
             except urllib_error.HTTPError as e:
                 if e.code == 404:
                     pass
