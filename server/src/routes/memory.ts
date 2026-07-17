@@ -5,6 +5,7 @@ import {
   upsertProfile,
   writeMemory,
   searchMemory,
+  forgetMemories,
 } from "../services/memory.js";
 import { config } from "../config.js";
 
@@ -98,4 +99,28 @@ memoryRouter.post("/search", async (req: Request, res: Response) => {
     console.error("[memory] search failed:", msg);
     res.status(500).json({ error: msg });
   }
+});
+
+/**
+ * POST /api/memory/forget — 按 hint 删除 owner 的匹配记忆条目（P7 遗忘机制）。
+ * Body: { hints: string[] }
+ * 响应：200 { deleted: number }
+ */
+memoryRouter.post("/forget", (req: Request, res: Response) => {
+  const ownerKey = (req as any).ownerKey as string;
+  const { hints } = req.body ?? {};
+
+  if (!Array.isArray(hints) || hints.length === 0) {
+    res.status(400).json({ error: "hints 必须是非空数组" });
+    return;
+  }
+  for (const h of hints) {
+    if (typeof h !== "string" || !h.trim()) {
+      res.status(400).json({ error: "hints 中每条必须是非空字符串" });
+      return;
+    }
+  }
+
+  const result = forgetMemories(ownerKey, hints);
+  res.json(result);
 });

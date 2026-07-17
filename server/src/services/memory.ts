@@ -120,6 +120,59 @@ export async function writeMemory(
   return { id, chunk_count: 1 };
 }
 
+// ====== 遗忘（P7 记忆写入策略）======
+
+/**
+ * 按 hint 字符串检索并删除 owner 的匹配记忆条目。
+ * 每个 hint 在 mem_fts 中搜索，删除匹配的 memory_entries + vec_mem + mem_fts 行。
+ * 未匹配到任何条目时返回 {deleted: 0}，不报错。
+ */
+export function forgetMemories(
+  ownerKey: string,
+  hints: string[],
+): { deleted: number } {
+  const delEntry = db.prepare("DELETE FROM memory_entries WHERE id = ?");
+  const delVec = db.prepare("DELETE FROM vec_mem WHERE rowid = ?");
+  const delFts = db.prepare("DELETE FROM mem_fts WHERE rowid = ?");
+
+  const idsToDelete = new Set<number>();
+
+  for (const hint of hints) {
+    if (!hint.trim()) continue;
+    try {
+      const rows = db
+        .prepare(
+          `SELECT f.rowid AS id
+             FROM mem_fts f
+             JOIN memory_entries m ON m.id = f.rowid
+            WHERE m.owner_key = ? AND f.content MATCH ?
+            LIMIT 20`,
+        )
+        .all(ownerKey, hint.trim()) as { id: number }[];
+      for (const r of rows) idsToDelete.add(r.id);
+    } catch {
+      // FTS MATCH 对某些 hint 语法可能抛出异常；跳过该 hint 继续。
+    }
+  }
+
+  if (idsToDelete.size === 0) return { deleted: 0 };
+
+  const tx = db.transaction(() => {
+    let deleted = 0;
+    for (const id of idsToDelete) {
+      const bigId = BigInt(id);
+      delEntry.run(id);
+      try { delVec.run(bigId); } catch { /* vec_mem 行可能不存在（无 embedding） */ }
+      delFts.run(id);
+      deleted++;
+    }
+    return deleted;
+  });
+
+  const deleted = tx();
+  return { deleted };
+}
+
 // ====== 沉淀检索 ======
 
 /**
