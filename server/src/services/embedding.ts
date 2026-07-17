@@ -18,17 +18,24 @@ function endpoint(baseUrl: string): string {
 
 /** Embed an ordered batch of texts via an OpenAI-compatible /embeddings API. */
 export async function embedTexts(texts: string[]): Promise<number[][]> {
-  const { base_url, api_key, model } = getEmbeddingSettings();
+  const { base_url, api_key, model, dim } = getEmbeddingSettings();
   if (!base_url || !model) {
     throw new Error("嵌入模型未配置（缺少 Base URL 或模型名称）");
   }
+  // Qwen3-Embedding (and OpenAI text-embedding-3) support Matryoshka (MRL)
+  // dimension truncation via the `dimensions` param. Without it the model
+  // returns its native size (e.g. Qwen3-Embedding-4B → 2560), which won't
+  // match EMBEDDING_DIM. Send it whenever a target dim is configured so both
+  // ingest/memory writes and query embeddings land on the same dimension.
+  const body: Record<string, unknown> = { model, input: texts };
+  if (dim && dim > 0) body.dimensions = dim;
   const res = await fetch(endpoint(base_url), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...(api_key ? { Authorization: `Bearer ${api_key}` } : {}),
     },
-    body: JSON.stringify({ model, input: texts }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
