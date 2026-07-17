@@ -147,26 +147,48 @@ def main() -> None:
 
 
 def _cleanup_registry(host: str, image: str, current_sha: str) -> None:
+    """Delete stale SHA-tagged manifests from the registry.
+
+    The Distribution (registry:2) API only supports DELETE by digest — a
+    DELETE by tag reference returns HTTP 400. But deleting a digest removes
+    *every* tag pointing at it, so we must protect the digests referenced by
+    `latest` and the current SHA (which are identical when image content is
+    unchanged) and skip any old tag that resolves to a protected digest.
+    """
     base = f"http://{host}/v2/{image}/manifests"
+    accept = {"Accept": "application/vnd.docker.distribution.manifest.v2+json"}
+
+    def digest_of(ref: str) -> str:
+        try:
+            req = request.Request(f"{base}/{ref}", headers=accept)
+            resp = request.urlopen(req, timeout=10)
+            return resp.headers.get("Docker-Content-Digest", "")
+        except urllib_error.HTTPError:
+            return ""
+
     try:
         tags_url = f"http://{host}/v2/{image}/tags/list"
         resp = request.urlopen(tags_url, timeout=10)
         data = __import__("json").loads(resp.read())
         tags = data.get("tags") or []
+
+        # Digests we must never delete (live image, possibly shared by tags).
+        protected = {d for d in (digest_of("latest"), digest_of(current_sha)) if d}
+
+        deleted: set[str] = set()
         for tag in tags:
             if tag in ("latest", current_sha):
                 continue
+            digest = digest_of(tag)
+            if not digest or digest in protected or digest in deleted:
+                continue
             try:
-                # Delete by tag reference (not digest) to avoid wiping other
-                # tags that share the same digest (e.g. latest + current SHA
-                # when image contents haven't changed).
-                del_req = request.Request(f"{base}/{tag}", method="DELETE")
+                del_req = request.Request(f"{base}/{digest}", method="DELETE")
                 request.urlopen(del_req, timeout=10)
-                print(f"  Deleted: {image}:{tag}")
+                deleted.add(digest)
+                print(f"  Deleted: {image}:{tag} ({digest[:19]}...)")
             except urllib_error.HTTPError as e:
-                if e.code == 404:
-                    pass
-                else:
+                if e.code != 404:
                     print(f"  [WARN] Failed to delete {tag}: HTTP {e.code}")
     except Exception as e:
         print(f"  [WARN] Registry cleanup error: {e}")
