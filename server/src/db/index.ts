@@ -66,6 +66,35 @@ db.exec(`
     content,
     tokenize = 'trigram'
   );
+
+  -- ====== 本体记忆（P6）======
+
+  -- 结构化画像：sender_id 主键单条
+  CREATE TABLE IF NOT EXISTS profiles (
+    sender_id    TEXT PRIMARY KEY,
+    nickname     TEXT NOT NULL DEFAULT '',
+    profile_json TEXT NOT NULL DEFAULT '{}',
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+  );
+
+  -- 自由文本沉淀：owner_key=sender_id（越权隔离键）
+  CREATE TABLE IF NOT EXISTS memory_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_key   TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    char_count  INTEGER NOT NULL,
+    salience    REAL NOT NULL DEFAULT 0,
+    last_access TEXT,
+    created_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_mem_owner ON memory_entries(owner_key);
+
+  -- 沉淀专用 FTS5 稀疏索引（与 chunks_fts 隔离）
+  CREATE VIRTUAL TABLE IF NOT EXISTS mem_fts USING fts5(
+    content,
+    tokenize = 'trigram'
+  );
 `);
 
 // ---- Migrations ------------------------------------------------------------
@@ -115,6 +144,40 @@ export function vecTableExists(): boolean {
   const row = db
     .prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vec_chunks'",
+    )
+    .get();
+  return Boolean(row);
+}
+
+// ---- 本体记忆向量表（P6，与 vec_chunks 隔离）----
+
+export function getMemVecDim(): number | null {
+  const row = db
+    .prepare("SELECT value FROM settings WHERE key = 'mem_vec_dim'")
+    .get() as { value: string } | undefined;
+  return row ? Number(row.value) : null;
+}
+
+export function ensureMemVecTable(dim: number): void {
+  const current = getMemVecDim();
+  if (current === dim) return;
+  if (current !== null && current !== dim) {
+    // Dimension changed: drop and rebuild.
+    db.exec("DROP TABLE IF EXISTS vec_mem;");
+  }
+  db.exec(
+    `CREATE VIRTUAL TABLE IF NOT EXISTS vec_mem USING vec0(embedding float[${dim}]);`,
+  );
+  db.prepare(
+    "INSERT INTO settings(key, value) VALUES ('mem_vec_dim', ?) " +
+      "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).run(String(dim));
+}
+
+export function memVecTableExists(): boolean {
+  const row = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vec_mem'",
     )
     .get();
   return Boolean(row);

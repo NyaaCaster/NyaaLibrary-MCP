@@ -67,6 +67,9 @@ export const config = {
   },
 
   dataDir: str("DATA_DIR", resolve(repoRoot, "data")),
+
+  // 本体记忆 REST 端点成对鉴权（决策10/F4）——调用端 KB_CLIENT_TOKEN 须与此相等
+  memoryServerToken: str("KB_SERVER_TOKEN"),
 } as const;
 
 export const SUPPORTED_EXTENSIONS = [
