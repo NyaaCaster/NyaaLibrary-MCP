@@ -4,7 +4,6 @@ import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
 import { KnowledgeBasesPage } from "./pages/KnowledgeBasesPage";
 import { KbDetailPage } from "./pages/KbDetailPage";
-import { EmbeddingSettingsPage } from "./pages/EmbeddingSettingsPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated()) return <Navigate to="/login" replace />;
@@ -24,7 +23,6 @@ export default function App() {
       >
         <Route path="/" element={<KnowledgeBasesPage />} />
         <Route path="/kb/:id" element={<KbDetailPage />} />
-        <Route path="/embedding" element={<EmbeddingSettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

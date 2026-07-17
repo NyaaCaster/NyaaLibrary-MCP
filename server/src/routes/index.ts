@@ -2,7 +2,6 @@ import { Router } from "express";
 import { requireSession } from "../auth/session.js";
 import { authRouter } from "./auth.js";
 import { kbRouter } from "./kb.js";
-import { embeddingRouter } from "./embedding.js";
 import { libraryRouter } from "./library.js";
 import { configRouter } from "./config.js";
 import { memoryRouter } from "./memory.js";
@@ -21,7 +20,6 @@ export function createApiRouter(): Router {
   api.use(requireSession);
   api.use("/config", configRouter);
   api.use("/kb", kbRouter);
-  api.use("/embedding", embeddingRouter);
   api.use("/", libraryRouter);
 
   return api;

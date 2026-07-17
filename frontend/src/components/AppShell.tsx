@@ -1,5 +1,5 @@
 import { Link, Outlet, useNavigate } from "react-router-dom";
-import { Library, LogOut, Settings2 } from "lucide-react";
+import { Library, LogOut } from "lucide-react";
 import { clearSession, getUsername } from "../lib/auth";
 import { APP_NAME } from "../version";
 import { ThemeToggle } from "./ThemeToggle";
@@ -24,13 +24,6 @@ export function AppShell() {
             <span className="hidden sm:inline">{APP_NAME}</span>
           </Link>
           <div className="flex-1" />
-          <Link
-            to="/embedding"
-            title="嵌入模型设置"
-            className="grid h-9 w-9 place-items-center rounded-lg text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            <Settings2 size={18} />
-          </Link>
           <ThemeToggle />
           <button
             type="button"
