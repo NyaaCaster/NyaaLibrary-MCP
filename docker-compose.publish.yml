@@ -1,0 +1,17 @@
+services:
+  nyaalibrary-mcp:
+    image: ${PRIVATE_DOCKER_REGISTRY_HOST:?err}/nyaalibrary-mcp:latest
+    pull_policy: always
+    container_name: nyaalibrary-mcp
+    ports:
+      - "5106:5101"
+    env_file:
+      - .env
+    environment:
+      - APP_PORT=5101
+      - HOST=0.0.0.0
+      - DATA_DIR=/app/data
+      - TZ=Asia/Shanghai
+    volumes:
+      - "/root/DockerContainer/DockerRes/nyaalibrary-mcp/data:/app/data"
+    restart: unless-stopped
