@@ -4,7 +4,7 @@ services:
     pull_policy: always
     container_name: nyaalibrary-mcp
     ports:
-      - "5106:5101"
+      - "5114:5101"
     env_file:
       - .env
     environment:
