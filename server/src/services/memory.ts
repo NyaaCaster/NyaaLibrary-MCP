@@ -132,8 +132,15 @@ export function forgetMemories(
   hints: string[],
 ): { deleted: number } {
   const delEntry = db.prepare("DELETE FROM memory_entries WHERE id = ?");
-  const delVec = db.prepare("DELETE FROM vec_mem WHERE rowid = ?");
   const delFts = db.prepare("DELETE FROM mem_fts WHERE rowid = ?");
+
+  // vec_mem is lazily created — only prepare the delete if the table exists
+  let delVec: ReturnType<typeof db.prepare> | null = null;
+  if (memVecTableExists()) {
+    try {
+      delVec = db.prepare("DELETE FROM vec_mem WHERE rowid = ?");
+    } catch { /* vec_mem may not exist yet */ }
+  }
 
   const idsToDelete = new Set<number>();
 
@@ -162,7 +169,9 @@ export function forgetMemories(
     for (const id of idsToDelete) {
       const bigId = BigInt(id);
       delEntry.run(id);
-      try { delVec.run(bigId); } catch { /* vec_mem 行可能不存在（无 embedding） */ }
+      if (delVec) {
+        try { delVec.run(bigId); } catch { /* vec_mem 行可能不存在 */ }
+      }
       delFts.run(id);
       deleted++;
     }
