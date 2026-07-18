@@ -4,6 +4,8 @@ import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
 import { KnowledgeBasesPage } from "./pages/KnowledgeBasesPage";
 import { KbDetailPage } from "./pages/KbDetailPage";
+import { OwnersPage } from "./pages/OwnersPage";
+import { OwnerDetailPage } from "./pages/OwnerDetailPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated()) return <Navigate to="/login" replace />;
@@ -23,6 +25,8 @@ export default function App() {
       >
         <Route path="/" element={<KnowledgeBasesPage />} />
         <Route path="/kb/:id" element={<KbDetailPage />} />
+        <Route path="/owners" element={<OwnersPage />} />
+        <Route path="/owners/:ownerKey" element={<OwnerDetailPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

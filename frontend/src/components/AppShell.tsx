@@ -1,11 +1,21 @@
-import { Link, Outlet, useNavigate } from "react-router-dom";
-import { Library, LogOut } from "lucide-react";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Brain, Library, LogOut } from "lucide-react";
 import { clearSession, getUsername } from "../lib/auth";
 import { APP_NAME } from "../version";
 import { ThemeToggle } from "./ThemeToggle";
 
+function navLink(to: string, current: string) {
+  const active = current === to || (to !== "/" && current.startsWith(to));
+  return `flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+    active
+      ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
+      : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+  }`;
+}
+
 export function AppShell() {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const username = getUsername();
 
   const logout = () => {
@@ -23,6 +33,14 @@ export function AppShell() {
             </span>
             <span className="hidden sm:inline">{APP_NAME}</span>
           </Link>
+          <nav className="ml-6 flex items-center gap-1">
+            <Link to="/" className={navLink("/", pathname)}>
+              <Library size={15} /> 知识库
+            </Link>
+            <Link to="/owners" className={navLink("/owners", pathname)}>
+              <Brain size={15} /> 猫猫记忆
+            </Link>
+          </nav>
           <div className="flex-1" />
           <ThemeToggle />
           <button
