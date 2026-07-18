@@ -1,69 +1,95 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Loader2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchOwnerMemory } from "../lib/api";
+import { ArrowLeft, Loader2 } from "lucide-react";
+import { fetchOwnerProfile } from "../lib/api";
+import { MemoryTab } from "./owners/MemoryTab";
+
+type Tab = "memory" | "profile";
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: "memory", label: "记忆条目" },
+  { key: "profile", label: "用户画像" },
+];
 
 export function OwnerDetailPage() {
   const { ownerKey } = useParams<{ ownerKey: string }>();
   const decoded = decodeURIComponent(ownerKey ?? "");
+  const [tab, setTab] = useState<Tab>("memory");
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["owner-memory", decoded],
-    queryFn: () => fetchOwnerMemory(decoded),
-    enabled: !!decoded,
+  const { data: profile, isLoading } = useQuery({
+    queryKey: ["owner-profile", decoded],
+    queryFn: () => fetchOwnerProfile(decoded),
+    enabled: tab === "profile",
   });
+
+  if (!decoded) return <p className="text-rose-600">缺少 owner 标识</p>;
 
   return (
     <div>
       <Link
         to="/owners"
-        className="mb-4 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-indigo-600"
+        className="mb-3 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-indigo-600"
       >
-        <ArrowLeft size={14} /> 返回 owner 列表
+        <ArrowLeft size={15} /> 返回
       </Link>
+      <h1 className="text-xl font-semibold break-all">{decoded}</h1>
 
-      <div className="mb-5">
-        <h1 className="text-xl font-semibold break-all">{decoded}</h1>
-        <p className="text-sm text-slate-500">
-          {data ? `${data.length} 条记忆条目` : "加载中…"}
-        </p>
+      <div className="mt-4 flex gap-1 border-b border-slate-200 dark:border-slate-800">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={`-mb-px whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium ${
+              tab === t.key
+                ? "border-indigo-600 text-indigo-600"
+                : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {isLoading && (
-        <div className="flex justify-center py-16 text-slate-400">
-          <Loader2 className="animate-spin" />
-        </div>
-      )}
-      {error && (
-        <p className="rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-600 dark:bg-rose-950/50">
-          {(error as Error).message}
-        </p>
-      )}
+      <div className="py-5">
+        {tab === "memory" && <MemoryTab ownerKey={decoded} />}
+        {tab === "profile" && (
+          <ProfileTabPlaceholder
+            profile={profile}
+            isLoading={isLoading}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 
-      {data && data.length === 0 && (
-        <div className="rounded-xl border border-dashed border-slate-300 py-16 text-center text-slate-400 dark:border-slate-700">
-          该 owner 暂无记忆条目。
-        </div>
-      )}
+/** P6 将替换为完整的 ProfileTab 组件。 */
+function ProfileTabPlaceholder({
+  profile,
+  isLoading,
+}: {
+  profile: unknown;
+  isLoading: boolean;
+}) {
+  if (isLoading)
+    return (
+      <div className="flex justify-center py-16 text-slate-400">
+        <Loader2 className="animate-spin" />
+      </div>
+    );
 
-      {data && data.length > 0 && (
-        <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-          <div className="px-5 py-3 text-sm text-slate-500">
-            记忆条目列表（Tab 界面将在 P5 实现）
-          </div>
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {data.map((entry) => (
-              <div key={entry.id} className="px-5 py-3">
-                <p className="line-clamp-2 text-sm">{entry.content}</p>
-                <p className="mt-1 text-xs text-slate-400">
-                  {entry.char_count} 字符 · salience {entry.salience} ·{" "}
-                  {new Date(entry.created_at).toLocaleDateString("zh-CN")}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+  if (!profile)
+    return (
+      <div className="rounded-xl border border-dashed border-slate-300 py-16 text-center text-slate-400 dark:border-slate-700">
+        该 owner 暂无画像。完整编辑功能将在后续版本中提供。
+      </div>
+    );
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+      <pre className="text-sm">{JSON.stringify(profile, null, 2)}</pre>
     </div>
   );
 }
