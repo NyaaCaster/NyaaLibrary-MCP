@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Loader2 } from "lucide-react";
-import { fetchOwnerProfile } from "../lib/api";
+import { ArrowLeft } from "lucide-react";
 import { MemoryTab } from "./owners/MemoryTab";
+import { ProfileTab } from "./owners/ProfileTab";
 
 type Tab = "memory" | "profile";
 
@@ -16,12 +15,6 @@ export function OwnerDetailPage() {
   const { ownerKey } = useParams<{ ownerKey: string }>();
   const decoded = decodeURIComponent(ownerKey ?? "");
   const [tab, setTab] = useState<Tab>("memory");
-
-  const { data: profile, isLoading } = useQuery({
-    queryKey: ["owner-profile", decoded],
-    queryFn: () => fetchOwnerProfile(decoded),
-    enabled: tab === "profile",
-  });
 
   if (!decoded) return <p className="text-rose-600">缺少 owner 标识</p>;
 
@@ -54,42 +47,8 @@ export function OwnerDetailPage() {
 
       <div className="py-5">
         {tab === "memory" && <MemoryTab ownerKey={decoded} />}
-        {tab === "profile" && (
-          <ProfileTabPlaceholder
-            profile={profile}
-            isLoading={isLoading}
-          />
-        )}
+        {tab === "profile" && <ProfileTab ownerKey={decoded} />}
       </div>
-    </div>
-  );
-}
-
-/** P6 将替换为完整的 ProfileTab 组件。 */
-function ProfileTabPlaceholder({
-  profile,
-  isLoading,
-}: {
-  profile: unknown;
-  isLoading: boolean;
-}) {
-  if (isLoading)
-    return (
-      <div className="flex justify-center py-16 text-slate-400">
-        <Loader2 className="animate-spin" />
-      </div>
-    );
-
-  if (!profile)
-    return (
-      <div className="rounded-xl border border-dashed border-slate-300 py-16 text-center text-slate-400 dark:border-slate-700">
-        该 owner 暂无画像。完整编辑功能将在后续版本中提供。
-      </div>
-    );
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-      <pre className="text-sm">{JSON.stringify(profile, null, 2)}</pre>
     </div>
   );
 }
