@@ -5,6 +5,7 @@ import { kbRouter } from "./kb.js";
 import { libraryRouter } from "./library.js";
 import { configRouter } from "./config.js";
 import { memoryRouter } from "./memory.js";
+import { ownersRouter } from "./owners.js";
 
 export function createApiRouter(): Router {
   const api = Router();
@@ -21,6 +22,7 @@ export function createApiRouter(): Router {
   api.use("/config", configRouter);
   api.use("/kb", kbRouter);
   api.use("/", libraryRouter);
+  api.use("/owners", ownersRouter);
 
   return api;
 }

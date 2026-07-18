@@ -245,7 +245,7 @@ export interface MemoryEntryRow {
 | P | 阶段 | 内容 | 交付物 | 状态 |
 | --- | --- | --- | --- | --- |
 | P1 | 后端 service | `listOwners` / `listMemoryByOwner` / `deleteMemoryById` / `deleteProfile` + 类型 | `services/adminMemory.ts` | ✅ |
-| P2 | 后端路由 | `routes/owners.ts`（7 端点，`requireSession`，zod 校验，错误透传）+ 挂载 | `routes/owners.ts`、`routes/index.ts` | ⬜ |
+| P2 | 后端路由 | `routes/owners.ts`（7 端点，`requireSession`，zod 校验，错误透传）+ 挂载 | `routes/owners.ts`、`routes/index.ts` | ✅ |
 | P3 | 前端 API 层 | 类型 + 调用函数 | `lib/api.ts` | ⬜ |
 | P4 | 前端导航+列表 | `AppShell` 导航、`OwnersPage`、路由 | `AppShell.tsx`、`OwnersPage.tsx`、`App.tsx` | ⬜ |
 | P5 | 记忆条目 Tab | `OwnerDetailPage`、`MemoryTab`、`MemoryDetailModal`、`MemoryCreateModal` | 对应组件 | ⬜ |
