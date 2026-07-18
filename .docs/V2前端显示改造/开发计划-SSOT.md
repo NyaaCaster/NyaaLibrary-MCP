@@ -250,7 +250,7 @@ export interface MemoryEntryRow {
 | P4 | 前端导航+列表 | `AppShell` 导航、`OwnersPage`、路由 | `AppShell.tsx`、`OwnersPage.tsx`、`App.tsx` | ✅ |
 | P5 | 记忆条目 Tab | `OwnerDetailPage`、`MemoryTab`、`MemoryDetailModal`、`MemoryCreateModal` | 对应组件 | ✅ |
 | P6 | 用户画像 Tab | `ProfileTab` + 编辑/删除弹窗 | `ProfileTab.tsx` | ✅ |
-| P7 | 端到端验证+部署 | 本地 build/typecheck → rebuild 推送 → macmini restart → 真机 E2E → 清理 | 验证记录 | ⬜ |
+| P7 | 端到端验证+部署 | 本地 build/typecheck → rebuild 推送 → macmini restart → 真机 E2E → 清理 | 验证记录 | ✅ |
 
 每个 P 可独立验证、独立提交。
 
