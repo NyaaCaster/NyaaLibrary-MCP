@@ -101,6 +101,79 @@ export interface AppConfig {
   retrieval: { topK: number };
 }
 
+// ---- Owner / Memory / Profile types (V2 前端显示改造) ----
+
+export interface OwnerSummary {
+  owner_key: string;
+  nickname: string;
+  memory_count: number;
+  has_profile: number; // 0 | 1
+}
+
+export interface MemoryEntryRow {
+  id: number;
+  owner_key: string;
+  content: string;
+  char_count: number;
+  salience: number;
+  created_at: string;
+}
+
+export interface ProfileRow {
+  sender_id: string;
+  nickname: string;
+  profile_json: string; // JSON string
+  created_at: string;
+  updated_at: string;
+}
+
+// ---- Owner / Memory / Profile API (V2 前端显示改造) ----
+
+export function fetchOwners() {
+  return api.get<OwnerSummary[]>("/owners");
+}
+
+export function fetchOwnerMemory(ownerKey: string) {
+  return api.get<MemoryEntryRow[]>(
+    `/owners/${encodeURIComponent(ownerKey)}/memory`,
+  );
+}
+
+export function createOwnerMemory(ownerKey: string, content: string, salience?: number) {
+  return api.post<{ id: number; chunk_count: number }>(
+    `/owners/${encodeURIComponent(ownerKey)}/memory`,
+    { content, ...(salience !== undefined ? { salience } : {}) },
+  );
+}
+
+export function deleteOwnerMemory(ownerKey: string, id: number) {
+  return api.del<void>(
+    `/owners/${encodeURIComponent(ownerKey)}/memory/${id}`,
+  );
+}
+
+export function fetchOwnerProfile(ownerKey: string) {
+  return api.get<ProfileRow>(
+    `/owners/${encodeURIComponent(ownerKey)}/profile`,
+  );
+}
+
+export function updateOwnerProfile(
+  ownerKey: string,
+  data: { nickname?: string; profile_patch?: Record<string, unknown> },
+) {
+  return api.put<ProfileRow>(
+    `/owners/${encodeURIComponent(ownerKey)}/profile`,
+    data,
+  );
+}
+
+export function deleteOwnerProfile(ownerKey: string) {
+  return api.del<void>(
+    `/owners/${encodeURIComponent(ownerKey)}/profile`,
+  );
+}
+
 /** Multipart upload (does not set Content-Type so the browser adds boundary). */
 export async function uploadDocuments(
   kbId: string,
