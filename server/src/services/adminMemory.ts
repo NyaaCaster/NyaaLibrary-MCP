@@ -24,6 +24,7 @@ export interface MemoryEntryRow {
   content: string;
   char_count: number;
   salience: number;
+  last_access: string | null;
   created_at: string;
 }
 
@@ -51,7 +52,7 @@ export function listOwners(): OwnerSummary[] {
 export function listMemoryByOwner(ownerKey: string): MemoryEntryRow[] {
   return db
     .prepare(
-      `SELECT id, owner_key, content, char_count, salience, created_at
+      `SELECT id, owner_key, content, char_count, salience, last_access, created_at
        FROM memory_entries
        WHERE owner_key = ?
        ORDER BY created_at DESC`,
@@ -74,6 +75,7 @@ export function deleteMemoryById(ownerKey: string, id: number): boolean {
     "DELETE FROM memory_entries WHERE id = ? AND owner_key = ?",
   );
   const delFts = db.prepare("DELETE FROM mem_fts WHERE rowid = ?");
+  const delFtsCjk = db.prepare("DELETE FROM mem_fts_cjk WHERE rowid = ?");
 
   let delVec: ReturnType<typeof db.prepare> | null = null;
   if (memVecTableExists()) {
@@ -96,6 +98,7 @@ export function deleteMemoryById(ownerKey: string, id: number): boolean {
       }
     }
     delFts.run(id);
+    delFtsCjk.run(id);
     return true;
   });
 

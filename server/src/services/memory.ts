@@ -295,9 +295,10 @@ export function forgetMemories(
 // ====== 沉淀检索 ======
 
 /**
- * 混合检索沉淀：dense (vec_mem KNN) + sparse (mem_fts BM25) → RRF 融合。
+ * 混合检索沉淀：dense (vec_mem KNN) + sparse-trigram (mem_fts BM25)
+ *   + sparse-cjk (mem_fts_cjk BM25, V2 D5) → RRF 融合 → D6 重排。
+ *
  * 所有阶段强制 WHERE owner_key = ?（决策 F4 越权隔离红线）。
- * 检索 SQL 与 retrieval.ts 同构，仅表名和过滤键不同。
  */
 export async function searchMemory(
   ownerKey: string,
@@ -338,7 +339,7 @@ export async function searchMemory(
     }
   }
 
-  // ---- Sparse ranking (BM25) ----
+  // ---- Sparse ranking (trigram BM25) ----
   const sparseRanks = new Map<number, number>();
   try {
     const rows = db
@@ -356,23 +357,96 @@ export async function searchMemory(
     // FTS MATCH can throw on certain query syntax; ignore and rely on dense.
   }
 
-  // ---- Reciprocal Rank Fusion ----
+  // ---- Sparse ranking (CJK bigram BM25) — V2 D5 ----
+  const cjkRanks = new Map<number, number>();
+  if (config.memory.cjkBigramEnabled) {
+    try {
+      const cjkQuery = bigram(q);
+      if (cjkQuery) {
+        const rows = db
+          .prepare(
+            `SELECT f.rowid AS id
+               FROM mem_fts_cjk f
+               JOIN memory_entries m ON m.id = f.rowid
+              WHERE m.owner_key = ? AND f.content MATCH ?
+              ORDER BY bm25(mem_fts_cjk)
+              LIMIT ?`,
+          )
+          .all(ownerKey, cjkQuery, config.retrieval.sparseTopK) as { id: number }[];
+        rows.forEach((r, i) => cjkRanks.set(r.id, i + 1));
+      }
+    } catch {
+      // CJK channel failure is non-fatal; skip silently.
+    }
+  }
+
+  // ---- Reciprocal Rank Fusion (3-way) ----
   const fused = new Map<number, number>();
   for (const [id, rank] of denseRanks)
     fused.set(id, (fused.get(id) ?? 0) + 1 / (RRF_K + rank));
   for (const [id, rank] of sparseRanks)
     fused.set(id, (fused.get(id) ?? 0) + 1 / (RRF_K + rank));
+  for (const [id, rank] of cjkRanks)
+    fused.set(id, (fused.get(id) ?? 0) + 1 / (RRF_K + rank));
 
-  const ranked = [...fused.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, topK);
-  if (ranked.length === 0) return [];
+  if (fused.size === 0) return [];
+
+  // ---- D6 统一重排（V2）----
+  // Fetch salience + timestamps for all fused candidates.
+  const fusedIds = [...fused.keys()];
+  const metaRows = db
+    .prepare(
+      `SELECT id, salience, last_access, created_at
+         FROM memory_entries
+        WHERE id IN (${fusedIds.map(() => "?").join(",")})`,
+    )
+    .all(...fusedIds) as {
+    id: number;
+    salience: number;
+    last_access: string | null;
+    created_at: string;
+  }[];
+  const metaMap = new Map(metaRows.map((r) => [r.id, r]));
+
+  const nowMs = Date.now();
+  const W = config.memory.salienceWeight;
+  const HL = config.memory.decayHalflifeDays;
+  const SEC_PER_DAY = 86400;
+
+  const scored = fusedIds.map((id) => {
+    const rrf = fused.get(id) ?? 0;
+    const meta = metaMap.get(id);
+    const sal = meta?.salience ?? 0.5;
+    const refTime = meta?.last_access ?? meta?.created_at ?? new Date(nowMs).toISOString();
+    const ageDays = (nowMs - new Date(refTime).getTime()) / 1000 / SEC_PER_DAY;
+    const decay = Math.pow(0.5, ageDays / HL);
+    const final = rrf * (1 + W * sal) * decay;
+    return { id, final, rrf };
+  });
+
+  scored.sort((a, b) => b.final - a.final);
+  const top = scored.slice(0, topK);
+  if (top.length === 0) return [];
+
+  // ---- D2 last_access 回写（V2，best-effort）----
+  try {
+    const updateLa = db.prepare(
+      "UPDATE memory_entries SET last_access = ? WHERE id = ?",
+    );
+    const nowISO = new Date(nowMs).toISOString();
+    const tx = db.transaction(() => {
+      for (const { id } of top) updateLa.run(nowISO, id);
+    });
+    tx();
+  } catch (err) {
+    console.warn("[memory] last_access writeback skipped:", (err as Error).message);
+  }
 
   const getEntry = db.prepare(
     "SELECT id, content FROM memory_entries WHERE id = ?",
   );
-  return ranked.map(([id, score]) => {
+  return top.map(({ id, final }) => {
     const row = getEntry.get(id) as { id: number; content: string };
-    return { id: row.id, content: row.content, score };
+    return { id: row.id, content: row.content, score: final };
   });
 }
