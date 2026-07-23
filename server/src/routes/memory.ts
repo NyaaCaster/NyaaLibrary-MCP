@@ -31,20 +31,23 @@ memoryRouter.get("/profile", (req: Request, res: Response) => {
 });
 
 /**
- * PUT /api/memory/profile — 写画像（字段级 merge）。
- * Body: { nickname?: string, profile_patch?: object }
+ * PUT /api/memory/profile — 写画像。
+ * Body: { nickname?: string, profile_patch?: object, merge_mode?: "merge" | "replace" }
+ * merge_mode 默认 "merge"（向后兼容），"replace" 整条覆盖。
  * 响应：200 + ProfileRow
  */
 memoryRouter.put("/profile", (req: Request, res: Response) => {
   const ownerKey = (req as any).ownerKey as string;
-  const { nickname, profile_patch } = req.body ?? {};
+  const { nickname, profile_patch, merge_mode } = req.body ?? {};
 
   if (profile_patch !== undefined && typeof profile_patch !== "object") {
     res.status(400).json({ error: "profile_patch 必须是对象" });
     return;
   }
 
-  const profile = upsertProfile(ownerKey, nickname, profile_patch);
+  const mergeMode: "merge" | "replace" =
+    merge_mode === "replace" ? "replace" : "merge";
+  const profile = upsertProfile(ownerKey, nickname, profile_patch, mergeMode);
   res.json(profile);
 });
 

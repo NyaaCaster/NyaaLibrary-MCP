@@ -34,15 +34,17 @@ export function getProfile(ownerKey: string): ProfileRow | null {
 }
 
 /**
- * 写画像：字段级 merge。
- * - 若 sender_id 已存在：合并 profile_json（{...old, ...patch}）→ UPDATE
- * - 若不存在：INSERT 新行
+ * 写画像：字段级 merge 或整条覆盖。
+ * - merge_mode="merge"（默认）：合并 profile_json（{...old, ...patch}）→ UPDATE
+ * - merge_mode="replace"：整条覆盖 profile_json → UPDATE
+ * - 若 sender_id 不存在：INSERT 新行（两种模式等价）
  * - nickname 有值时同步更新
  */
 export function upsertProfile(
   ownerKey: string,
   nickname?: string,
   profilePatch?: Record<string, unknown>,
+  mergeMode: "merge" | "replace" = "merge",
 ): ProfileRow {
   const now = new Date().toISOString();
   const existing = db
@@ -51,9 +53,14 @@ export function upsertProfile(
 
   if (existing) {
     const oldProfile = JSON.parse(existing.profile_json || "{}");
-    const merged = profilePatch
-      ? JSON.stringify({ ...oldProfile, ...profilePatch })
-      : existing.profile_json;
+    let merged: string;
+    if (mergeMode === "replace") {
+      merged = JSON.stringify(profilePatch ?? {});
+    } else {
+      merged = profilePatch
+        ? JSON.stringify({ ...oldProfile, ...profilePatch })
+        : existing.profile_json;
+    }
     const newNickname =
       nickname !== undefined ? nickname : existing.nickname;
 

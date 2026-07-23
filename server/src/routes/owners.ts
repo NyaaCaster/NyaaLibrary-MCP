@@ -23,6 +23,7 @@ const postMemorySchema = z.object({
 const putProfileSchema = z.object({
   nickname: z.string().optional(),
   profile_patch: z.record(z.unknown()).optional(),
+  merge_mode: z.enum(["merge", "replace"]).optional().default("merge"),
 });
 
 // ====== GET /api/owners — owner 列表 ======
@@ -59,7 +60,7 @@ ownersRouter.post("/:ownerKey/memory", async (req, res) => {
     const result = await writeMemory(
       req.params.ownerKey,
       parsed.data.content,
-      parsed.data.salience ?? 0,
+      parsed.data.salience ?? 0.5,
     );
     res.status(201).json(result);
   } catch (err) {
@@ -103,7 +104,7 @@ ownersRouter.put("/:ownerKey/profile", (req, res) => {
     res.status(400).json({ error: "参数无效" });
     return;
   }
-  const { nickname, profile_patch } = parsed.data;
+  const { nickname, profile_patch, merge_mode } = parsed.data;
 
   // 校验 profile_patch 在提交时至少有一个有效字段
   if (nickname === undefined && profile_patch === undefined) {
@@ -115,6 +116,7 @@ ownersRouter.put("/:ownerKey/profile", (req, res) => {
     req.params.ownerKey,
     nickname,
     profile_patch as Record<string, unknown> | undefined,
+    merge_mode,
   );
   res.json(profile);
 });
