@@ -17,6 +17,20 @@ function str(name: string, fallback = ""): string {
   return process.env[name]?.trim() || fallback;
 }
 
+function bool(name: string, fallback: boolean): boolean {
+  const raw = process.env[name]?.trim()?.toLowerCase();
+  if (raw === "1" || raw === "true" || raw === "yes") return true;
+  if (raw === "0" || raw === "false" || raw === "no") return false;
+  return fallback;
+}
+
+function flt(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function int(name: string, fallback: number): number {
   const raw = process.env[name]?.trim();
   if (!raw) return fallback;
@@ -70,6 +84,15 @@ export const config = {
 
   // 本体记忆 REST 端点成对鉴权（决策10/F4）——调用端 KB_CLIENT_TOKEN 须与此相等
   memoryServerToken: str("KB_SERVER_TOKEN"),
+
+  // V2 记忆线补强 配置（SSOT §2.3 已锁定）
+  memory: {
+    dedupEnabled: bool("MEM_DEDUP_ENABLED", true),
+    dedupSimThreshold: flt("MEM_DEDUP_SIM_THRESHOLD", 0.92),
+    decayHalflifeDays: int("MEM_DECAY_HALFLIFE_DAYS", 30),
+    salienceWeight: flt("MEM_SALIENCE_WEIGHT", 0.15),
+    cjkBigramEnabled: bool("MEM_CJK_BIGRAM_ENABLED", true),
+  },
 } as const;
 
 export const SUPPORTED_EXTENSIONS = [

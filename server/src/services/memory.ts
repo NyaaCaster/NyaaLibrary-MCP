@@ -1,4 +1,5 @@
-import { db, ensureMemVecTable, getMemVecDim, memVecTableExists } from "../db/index.js";
+import { db, ensureMemVecTable, getMemVecDim, memVecTableExists, memFtsCjkTableExists } from "../db/index.js";
+import { bigram } from "../utils/bigram.js";
 import { embedMany } from "./embedding.js";
 import { getEmbeddingSettings } from "./settings.js";
 import { config } from "../config.js";
@@ -75,11 +76,11 @@ export function upsertProfile(
 
 // ====== 沉淀写入 ======
 
-/** 写一条记忆沉淀：embed → 事务写 memory_entries + vec_mem + mem_fts。 */
+/** 写一条记忆沉淀：embed → 事务写 memory_entries + vec_mem + mem_fts + mem_fts_cjk。 */
 export async function writeMemory(
   ownerKey: string,
   content: string,
-  salience: number = 0,
+  salience: number = 0.5,
 ): Promise<{ id: number; chunk_count: number }> {
   const { dim } = getEmbeddingSettings();
   if (!dim || dim <= 0) {
@@ -96,10 +97,16 @@ export async function writeMemory(
     throw new Error("向量表维度与当前嵌入维度不匹配");
   }
 
+  // salience clamp：非数值/NaN → 落 0.5；否则 clamp [0, 1]（SSOT D1）
+  const clampedSalience =
+    typeof salience === "number" && !Number.isNaN(salience)
+      ? Math.min(1, Math.max(0, salience))
+      : 0.5;
+
   const now = new Date().toISOString();
   const insertEntry = db.prepare(
-    `INSERT INTO memory_entries (owner_key, content, char_count, salience, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO memory_entries (owner_key, content, char_count, salience, last_access, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
   );
   const insertVec = db.prepare(
     "INSERT INTO vec_mem (rowid, embedding) VALUES (?, ?)",
@@ -107,12 +114,25 @@ export async function writeMemory(
   const insertFts = db.prepare(
     "INSERT INTO mem_fts (rowid, content) VALUES (?, ?)",
   );
+  const insertFtsCjk = db.prepare(
+    "INSERT INTO mem_fts_cjk (rowid, content) VALUES (?, ?)",
+  );
+
+  const cjkContent = bigram(content);
 
   const tx = db.transaction(() => {
-    const info = insertEntry.run(ownerKey, content, content.length, salience, now);
+    const info = insertEntry.run(
+      ownerKey,
+      content,
+      content.length,
+      clampedSalience,
+      now,
+      now,
+    );
     const id = Number(info.lastInsertRowid);
     insertVec.run(BigInt(id), JSON.stringify(embeddings[0]));
     insertFts.run(id, content);
+    insertFtsCjk.run(id, cjkContent);
     return id;
   });
 
@@ -133,6 +153,7 @@ export function forgetMemories(
 ): { deleted: number } {
   const delEntry = db.prepare("DELETE FROM memory_entries WHERE id = ?");
   const delFts = db.prepare("DELETE FROM mem_fts WHERE rowid = ?");
+  const delFtsCjk = db.prepare("DELETE FROM mem_fts_cjk WHERE rowid = ?");
 
   // vec_mem is lazily created — only prepare the delete if the table exists
   let delVec: ReturnType<typeof db.prepare> | null = null;
@@ -173,6 +194,7 @@ export function forgetMemories(
         try { delVec.run(bigId); } catch { /* vec_mem 行可能不存在 */ }
       }
       delFts.run(id);
+      delFtsCjk.run(id);
       deleted++;
     }
     return deleted;

@@ -3,6 +3,7 @@ import * as sqliteVec from "sqlite-vec";
 import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { config } from "../config.js";
+import { bigram } from "../utils/bigram.js";
 
 const DB_FILE = resolve(config.dataDir, "library.db");
 
@@ -84,7 +85,7 @@ db.exec(`
     owner_key   TEXT NOT NULL,
     content     TEXT NOT NULL,
     char_count  INTEGER NOT NULL,
-    salience    REAL NOT NULL DEFAULT 0,
+    salience    REAL NOT NULL DEFAULT 0.5,
     last_access TEXT,
     created_at  TEXT NOT NULL
   );
@@ -94,6 +95,12 @@ db.exec(`
   CREATE VIRTUAL TABLE IF NOT EXISTS mem_fts USING fts5(
     content,
     tokenize = 'trigram'
+  );
+
+  -- CJK bigram FTS（V2 记忆线补强 D5）
+  CREATE VIRTUAL TABLE IF NOT EXISTS mem_fts_cjk USING fts5(
+    content,
+    tokenize = 'unicode61'
   );
 `);
 
@@ -181,4 +188,45 @@ export function memVecTableExists(): boolean {
     )
     .get();
   return Boolean(row);
+}
+
+export function memFtsCjkTableExists(): boolean {
+  const row = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mem_fts_cjk'",
+    )
+    .get();
+  return Boolean(row);
+}
+
+// ---- CJK bigram 存量回填（V2 记忆线补强 D5）--------------------------------
+// 对 mem_fts_cjk 建表前已有的 memory_entries 做一次性 bigram 回填。
+// 触发条件：mem_fts_cjk 为空且 memory_entries 有数据。
+// 在模块加载时执行（启动阶段），幂等。
+{
+  const cjkCount = db
+    .prepare("SELECT count(*) AS c FROM mem_fts_cjk")
+    .get() as { c: number };
+  if (cjkCount.c === 0) {
+    const memCount = db
+      .prepare("SELECT count(*) AS c FROM memory_entries")
+      .get() as { c: number };
+    if (memCount.c > 0) {
+      const rows = db
+        .prepare("SELECT id, content FROM memory_entries")
+        .all() as { id: number; content: string }[];
+      const insert = db.prepare(
+        "INSERT INTO mem_fts_cjk (rowid, content) VALUES (?, ?)",
+      );
+      const tx = db.transaction(() => {
+        for (const r of rows) {
+          insert.run(r.id, bigram(r.content));
+        }
+      });
+      tx();
+      console.log(
+        `[db] mem_fts_cjk 存量回填完成：${rows.length} 条记忆已 bigram 化写入`,
+      );
+    }
+  }
 }

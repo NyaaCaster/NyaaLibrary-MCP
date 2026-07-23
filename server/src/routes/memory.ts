@@ -63,7 +63,7 @@ memoryRouter.post("/write", async (req: Request, res: Response) => {
   }
 
   try {
-    const result = await writeMemory(ownerKey, content.trim(), salience ?? 0);
+    const result = await writeMemory(ownerKey, content.trim(), salience);
     res.status(201).json(result);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
