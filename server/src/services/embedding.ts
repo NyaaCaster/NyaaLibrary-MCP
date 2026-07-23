@@ -49,6 +49,15 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
     .map((d) => d.embedding);
 }
 
+/** L2-normalize a vector in-place (mutates). Returns the same reference. */
+export function l2Normalize(vec: number[]): number[] {
+  const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));
+  if (norm > 0) {
+    for (let i = 0; i < vec.length; i++) vec[i] /= norm;
+  }
+  return vec;
+}
+
 /** Probe the configured model to discover its embedding dimension. */
 export async function detectDimension(): Promise<number> {
   const [vec] = await embedTexts(["dimension probe"]);

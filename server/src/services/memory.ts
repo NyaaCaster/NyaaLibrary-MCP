@@ -1,6 +1,6 @@
 import { db, ensureMemVecTable, getMemVecDim, memVecTableExists, memFtsCjkTableExists } from "../db/index.js";
 import { bigram } from "../utils/bigram.js";
-import { embedMany } from "./embedding.js";
+import { embedMany, l2Normalize } from "./embedding.js";
 import { getEmbeddingSettings } from "./settings.js";
 import { config } from "../config.js";
 
@@ -103,7 +103,97 @@ export async function writeMemory(
       ? Math.min(1, Math.max(0, salience))
       : 0.5;
 
+  // ---- 去重检测（D3, SSOT P2）----
+  // 同 owner 域内 vec KNN → 归一化余弦 ≥ 阈值则判定为同一事实，走 D4 合并。
+  let mergeTargetId: number | null = null;
+  if (config.memory.dedupEnabled && memVecTableExists()) {
+    try {
+      const rows = db
+        .prepare(
+          `WITH knn AS (
+             SELECT rowid AS mem_id, distance
+             FROM vec_mem
+             WHERE embedding MATCH ? AND k = ?
+           )
+           SELECT knn.mem_id AS id
+             FROM knn
+             JOIN memory_entries m ON m.id = knn.mem_id
+            WHERE m.owner_key = ?
+            ORDER BY knn.distance
+            LIMIT 1`,
+        )
+        .all(
+          JSON.stringify(embeddings[0]),
+          config.retrieval.denseTopK,
+          ownerKey,
+        ) as { id: number }[];
+
+      if (rows.length > 0) {
+        const candRow = db
+          .prepare("SELECT embedding FROM vec_mem WHERE rowid = ?")
+          .get(rows[0].id) as { embedding: string } | undefined;
+        if (candRow) {
+          const vNew = l2Normalize([...embeddings[0]]);
+          const vCand = l2Normalize(JSON.parse(candRow.embedding) as number[]);
+          let sim = 0;
+          for (let i = 0; i < vNew.length; i++) sim += vNew[i] * vCand[i];
+          if (sim >= config.memory.dedupSimThreshold) {
+            mergeTargetId = rows[0].id;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[memory] dedup check skipped:", (err as Error).message);
+    }
+  }
+
   const now = new Date().toISOString();
+  const cjkContent = bigram(content);
+
+  // D4 冲突消解：合并到已有条目（SSOT D4）
+  if (mergeTargetId !== null) {
+    const updateEntry = db.prepare(
+      `UPDATE memory_entries
+          SET content = ?, char_count = ?, salience = MAX(salience, ?),
+              last_access = ?
+        WHERE id = ?`,
+    );
+    const syncVec = db.prepare("DELETE FROM vec_mem WHERE rowid = ?");
+    const syncVecIns = db.prepare(
+      "INSERT INTO vec_mem (rowid, embedding) VALUES (?, ?)",
+    );
+    const syncFts = db.prepare("DELETE FROM mem_fts WHERE rowid = ?");
+    const syncFtsIns = db.prepare(
+      "INSERT INTO mem_fts (rowid, content) VALUES (?, ?)",
+    );
+    const syncFtsCjk = db.prepare("DELETE FROM mem_fts_cjk WHERE rowid = ?");
+    const syncFtsCjkIns = db.prepare(
+      "INSERT INTO mem_fts_cjk (rowid, content) VALUES (?, ?)",
+    );
+
+    const tx = db.transaction(() => {
+      updateEntry.run(
+        content,
+        content.length,
+        clampedSalience,
+        now,
+        mergeTargetId,
+      );
+      const bigId = BigInt(mergeTargetId!);
+      syncVec.run(bigId);
+      syncVecIns.run(bigId, JSON.stringify(embeddings[0]));
+      syncFts.run(mergeTargetId!);
+      syncFtsIns.run(mergeTargetId!, content);
+      syncFtsCjk.run(mergeTargetId!);
+      syncFtsCjkIns.run(mergeTargetId!, cjkContent);
+      return mergeTargetId!;
+    });
+
+    const id = tx();
+    return { id, chunk_count: 1 };
+  }
+
+  // 原 append 路径（无候选 / 去重未命中）
   const insertEntry = db.prepare(
     `INSERT INTO memory_entries (owner_key, content, char_count, salience, last_access, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
@@ -117,8 +207,6 @@ export async function writeMemory(
   const insertFtsCjk = db.prepare(
     "INSERT INTO mem_fts_cjk (rowid, content) VALUES (?, ?)",
   );
-
-  const cjkContent = bigram(content);
 
   const tx = db.transaction(() => {
     const info = insertEntry.run(
