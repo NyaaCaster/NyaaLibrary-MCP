@@ -178,6 +178,7 @@ function ProfileEditModal({
       return updateOwnerProfile(ownerKey, {
         nickname: nickname.trim() || undefined,
         profile_patch: profilePatch,
+        merge_mode: "replace",
       });
     },
     onSuccess: onSaved,

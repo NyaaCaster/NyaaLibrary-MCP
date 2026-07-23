@@ -116,6 +116,7 @@ export interface MemoryEntryRow {
   content: string;
   char_count: number;
   salience: number;
+  last_access: string | null;
   created_at: string;
 }
 
@@ -160,7 +161,7 @@ export function fetchOwnerProfile(ownerKey: string) {
 
 export function updateOwnerProfile(
   ownerKey: string,
-  data: { nickname?: string; profile_patch?: Record<string, unknown> },
+  data: { nickname?: string; profile_patch?: Record<string, unknown>; merge_mode?: string },
 ) {
   return api.put<ProfileRow>(
     `/owners/${encodeURIComponent(ownerKey)}/profile`,
