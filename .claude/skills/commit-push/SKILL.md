@@ -27,7 +27,14 @@
    <body>
    "@
    ```
-4. `git push -u origin master`（首次）或 `git push`（后续）
+4. `git -c http.extraHeader="Authorization: Bearer $GITHUB_PAT" push -u origin master`（首次）或 `git -c http.extraHeader="Authorization: Bearer $GITHUB_PAT" push origin master`（后续）
+
+## GitHub 鉴权（MUST）
+
+所有 `git push` / `gh` 操作必须通过 `$GITHUB_PAT` 鉴权。
+`$GITHUB_PAT` 由 `H:\GitHub\.claude\settings.json` 的 `env` 段注入，无需手动设置。
+
+禁止裸 `git push`（会走 DPAPI/Credential Manager → Session 0 报错）。
 
 ## 推送前二次确认
 
