@@ -27,7 +27,7 @@
    <body>
    "@
    ```
-4. `git -c http.extraHeader="Authorization: Bearer $GITHUB_PAT" push -u origin master`（首次）或 `git -c http.extraHeader="Authorization: Bearer $GITHUB_PAT" push origin master`（后续）
+4. `git -c credential.helper= -c "url.https://x-access-token:$GITHUB_PAT@github.com/.insteadOf=https://github.com/" push -u origin master`（首次）或 `git -c credential.helper= -c "url.https://x-access-token:$GITHUB_PAT@github.com/.insteadOf=https://github.com/" push origin master`（后续）
 
 ## GitHub 鉴权（MUST）
 
