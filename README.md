@@ -148,12 +148,12 @@ python rebuild.py
 
 # 传输文件
 scp -P 22141 docker-compose.publish.yml restart.py .env \
-    U-MacMini-1:/root/DockerContainer/NyaaLibrary-MCP/
-ssh U-MacMini-1 -p 22141 \
+    macmini:/root/DockerContainer/NyaaLibrary-MCP/
+ssh macmini -p 22141 \
     "cd /root/DockerContainer/NyaaLibrary-MCP && mv docker-compose.publish.yml docker-compose.yml"
 
 # macmini 启动
-ssh U-MacMini-1 -p 22141
+ssh macmini -p 22141
 mkdir -p /root/DockerContainer/DockerRes/nyaalibrary-mcp/data
 chown -R 1000:1000 /root/DockerContainer/DockerRes/nyaalibrary-mcp/data
 cd /root/DockerContainer/NyaaLibrary-MCP
