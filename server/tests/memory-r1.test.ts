@@ -65,6 +65,24 @@ try {
   assert.equal((db.prepare("SELECT count(*) n FROM memory_entries WHERE owner_key='a'").get() as {n:number}).n,1);
   assert.equal((db.prepare("SELECT request_json FROM memory_operations WHERE operation_id='one'").get() as {request_json:null}).request_json,null);
   assert.deepEqual(JSON.parse(getProfile("a")!.profile_json),{nested:{a:0,b:false}});
+  // Identical vectors must never authorize deletion without exact user evidence.
+  for(const [index,oldText,newText] of [
+    [0,'喜欢茶','不喝茶'],[1,'养两只猫','养三只猫'],
+    [2,'喜欢跑步','喜欢散步'],[3,'喜欢猫，也喜欢茶','不再喜欢茶'],
+  ] as const) {
+    const owner=`conservative-${index}`;
+    const prior=await writeMemory(owner,oldText,.5);
+    const snapshot=await createSnapshot(owner,{query:newText,sources:[{id:'current',author:owner,role:'user',content:newText}]}) as {snapshot_id:string};
+    const operation_id=`keep-${index}`;
+    acceptBatch(owner,{operation_id,snapshot_id:snapshot.snapshot_id,memory_entries:[{content:newText,salience:.5}],
+      removals:[{id:prior.id,version:1,source_id:'current',evidence:newText,reason:'correction'}]});
+    await runOperation(owner,operation_id);
+    const operation=getOperation(owner,operation_id)!;
+    assert.equal(operation.state,'committed');
+    assert.equal((db.prepare('SELECT count(*) n FROM memory_entries WHERE owner_key=?').get(owner) as {n:number}).n,2);
+    const result=JSON.parse((db.prepare('SELECT result_json FROM memory_operations WHERE owner=? AND operation_id=?').get(owner,operation_id) as {result_json:string}).result_json);
+    assert.equal(result.deleted,0);assert.deepEqual(result.ignored_removals,[prior.id]);
+  }
   const conflict=await snap("a");upsertProfile("a",undefined,{other:1});
   assert.throws(()=>acceptBatch("a",{operation_id:"cas",snapshot_id:conflict.snapshot_id}));
   const rollback=await snap("a");
@@ -92,6 +110,16 @@ try {
     deleteExactMemory("a",current.id);
   })());
   assert.equal((db.prepare("SELECT count(*) n FROM vec_mem").get() as {n:number}).n,count);
+  const beforeDelete=db.prepare("SELECT id,content FROM memory_entries WHERE owner_key='a' ORDER BY id").all();
+  assert.throws(()=>db.transaction(()=>{
+    db.exec('ALTER TABLE vec_mem RENAME TO hidden_vec');
+    db.exec("CREATE TABLE vec_mem(rowid INTEGER PRIMARY KEY); CREATE TRIGGER fail_vector_delete BEFORE DELETE ON vec_mem BEGIN SELECT RAISE(ABORT,'vector delete unavailable'); END");
+    const current=beforeDelete[0] as {id:number};
+    db.prepare('INSERT INTO vec_mem(rowid) VALUES(?)').run(current.id);
+    deleteExactMemory('a',current.id);
+  })());
+  assert.deepEqual(db.prepare("SELECT id,content FROM memory_entries WHERE owner_key='a' ORDER BY id").all(),beforeDelete);
+  assert.equal((db.prepare('SELECT count(*) n FROM vec_mem').get() as {n:number}).n,count);
   async function rebuild(activate:boolean) {
     const child=spawn(process.execPath,["--import","tsx","server/src/tools/rebuildMemoryIndex.ts",...(activate?["--activate"]:[])],{env:{...process.env,MEMORY_MAINTENANCE:"1"},stdio:["ignore","pipe","pipe"]});
     let output="";child.stdout.on("data",x=>output+=x);child.stderr.on("data",x=>output+=x);
