@@ -117,4 +117,4 @@
 
 ## R1 专项索引（2026-10-24）
 
-唯一计划：`H:/GitHub/AstrbotDev/.docs/astrbot插件猫猫智能框架/优化修正计划-SSOT.md`。P1 服务批次协议、空间守卫、迁移工具已通过真实 sqlite-vec 隔离测试与全仓 typecheck/build；生产尚未切换。后续状态以该 SSOT 为准。
+唯一计划：`H:/GitHub/AstrbotDev/.docs/astrbot插件猫猫智能框架/优化修正计划-SSOT.md`。R1-P0–P5 ✅，完成于2026-10-24。服务0.2.0运行代码e467a44、插件b125f9f已部署macmini；1656正文索引重建、隔离冒烟/精确清理及647秒观察通过。无真实LLM调用，观察期无真实聊天流量。补充原生保守整理/向量删除失败测试a9abbd8已推送。唯一验收证据、脱敏manifest及恢复运行手册见同目录《验收证据-R1.md》《阶段交接-R1-006.md》。固定版本需同时使用远端docker-compose.r1.yml，原restart.py仅加载base会丢失固定版本；恢复包至少保留至2026-10-31。后续状态以专项SSOT为准。
