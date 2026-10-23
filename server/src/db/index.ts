@@ -12,6 +12,17 @@ if (!existsSync(config.dataDir)) {
 }
 
 export const db = new Database(DB_FILE);
+// Back up an existing database before startup migrations, including its WAL.
+// A failed backup aborts startup rather than allowing an unprotected migration.
+if (existsSync(DB_FILE) && db.prepare("SELECT count(*) n FROM sqlite_master").get()) {
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE name='settings'").get();
+  if (tables) {
+    const revision = db.prepare("SELECT value FROM settings WHERE key='memory_schema_version'").get() as { value: string } | undefined;
+    if (revision?.value !== "2") {
+      await db.backup(resolve(config.dataDir, `library-pre-r1-${Date.now()}.db`));
+    }
+  }
+}
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 sqliteVec.load(db);
@@ -121,6 +132,38 @@ addColumnIfMissing(
   "enabled",
   "enabled INTEGER NOT NULL DEFAULT 1",
 );
+addColumnIfMissing("profiles", "revision", "revision INTEGER NOT NULL DEFAULT 1");
+addColumnIfMissing("memory_entries", "version", "version INTEGER NOT NULL DEFAULT 1");
+db.exec(`
+  CREATE TABLE IF NOT EXISTS memory_owner_revisions(owner TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0);
+  CREATE TABLE IF NOT EXISTS memory_snapshots(
+    id TEXT PRIMARY KEY, owner TEXT NOT NULL, revision INTEGER NOT NULL,
+    candidates_json TEXT, sources_json TEXT, created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_memory_snapshots_owner ON memory_snapshots(owner);
+  CREATE TABLE IF NOT EXISTS memory_operations(
+    owner TEXT NOT NULL, operation_id TEXT NOT NULL, parent_id TEXT,
+    request_hash TEXT NOT NULL, request_json TEXT, state TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0,
+    result_json TEXT, error_code TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    PRIMARY KEY(owner, operation_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_memory_operations_state ON memory_operations(state, next_attempt);
+  CREATE TRIGGER IF NOT EXISTS memory_profile_insert AFTER INSERT ON profiles BEGIN
+    INSERT INTO memory_owner_revisions(owner,revision) VALUES(new.sender_id,1)
+    ON CONFLICT(owner) DO UPDATE SET revision=revision+1;
+  END;
+  CREATE TRIGGER IF NOT EXISTS memory_profile_update AFTER UPDATE ON profiles BEGIN
+    INSERT INTO memory_owner_revisions(owner,revision) VALUES(new.sender_id,1)
+    ON CONFLICT(owner) DO UPDATE SET revision=revision+1;
+  END;
+  CREATE TRIGGER IF NOT EXISTS memory_profile_delete AFTER DELETE ON profiles BEGIN
+    INSERT INTO memory_owner_revisions(owner,revision) VALUES(old.sender_id,1)
+    ON CONFLICT(owner) DO UPDATE SET revision=revision+1;
+  END;
+  INSERT INTO settings(key,value) VALUES('memory_schema_version','2')
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value;
+`);
 // sqlite-vec virtual tables require a fixed dimension at creation time, which
 // is only known once an embedding model is configured. We create it lazily and
 // record the active dimension so retrieval can guard against a missing table.
@@ -169,8 +212,7 @@ export function ensureMemVecTable(dim: number): void {
   const current = getMemVecDim();
   if (current === dim) return;
   if (current !== null && current !== dim) {
-    // Dimension changed: drop and rebuild.
-    db.exec("DROP TABLE IF EXISTS vec_mem;");
+    throw new Error("MEMORY_SPACE_MIGRATION_REQUIRED");
   }
   db.exec(
     `CREATE VIRTUAL TABLE IF NOT EXISTS vec_mem USING vec0(embedding float[${dim}]);`,

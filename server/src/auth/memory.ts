@@ -51,7 +51,7 @@ export function requireSenderId(
   next: NextFunction,
 ): void {
   const sid = req.headers["x-sender-id"];
-  if (typeof sid !== "string" || !sid.trim()) {
+  if (typeof sid !== "string" || (!sid.trim() || sid.trim().length > 200)) {
     res.status(400).json({ error: "缺少 X-Sender-Id" });
     return;
   }

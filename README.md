@@ -221,3 +221,13 @@ curl -X POST http://localhost:5114/api/memory/search \
 ## License
 
 AGPL-3.0 — 详见 [LICENSE](LICENSE)
+
+## R1 reliable memory protocol
+
+`POST /api/memory/v2/snapshot` accepts `{query, sources:[{id, author, role:"user", content}]}`; author must match authenticated X-Sender-Id. It freezes owner candidates and profile revision. `POST /api/memory/v2/batches` accepts `operation_id`, `snapshot_id`, optional `parent_id`, `nickname`, `profile_patch`, `delete_paths`, `memory_entries` (salience 0..1), and `removals` (id/version/source_id/evidence/reason). Accepted is 202, **not committed**. Poll `GET /api/memory/v2/batches/:id`; only `committed` confirms the atomic transaction. Same ID/same canonical body replays; different body returns 409. Parked operations retain their intent; management session may inspect `/api/owners/operations/status` and retry `/api/owners/:owner/operations/:id/retry`.
+
+Profiles in v2 deep merge objects, replace arrays and preserve false/0; JSON Pointer delete_paths explicitly retract fields. Legacy profile merge remains shallow for compatibility. Legacy `/write` remains synchronous; `/forget` now returns `UPGRADE_REQUIRED_USE_SNAPSHOT_REMOVALS` (409). Semantic similarity never deletes facts. Destructive evidence must quote the selected old fact verbatim and explicitly retract/correct it; uncertain cases retain both.
+
+Memory vectors have a model/endpoint/dimension fingerprint. Unknown or changed spaces reject writes; no automatic DROP. Use `node server/dist/tools/rebuildMemoryIndex.js` against an isolated DB copy to prepare a resumable artifact, then `--activate` with `MEMORY_MAINTENANCE=1` and all writers stopped. Activation backs up DB, archives old vectors and transactionally switches only memory indices. Ordinary knowledge-base indices are unchanged. DATA_DIR/.r1-maintenance.json may contain `{ "active": true, "smokeOwner": "isolated-owner" }`; malformed maintenance files fail closed.
+
+Validation: `npx tsx server/tests/memory-r1.test.ts` uses a disposable DB, real sqlite-vec, and mock embeddings; cleans all generated files. Also run `npm run typecheck` and `npm run build`.

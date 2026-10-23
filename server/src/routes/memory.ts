@@ -1,129 +1,41 @@
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
+import { z } from "zod";
 import { requireMemoryAuth, requireSenderId } from "../auth/memory.js";
-import {
-  getProfile,
-  upsertProfile,
-  writeMemory,
-  searchMemory,
-  forgetMemories,
-} from "../services/memory.js";
+import { getProfile, upsertProfile, writeMemory, searchMemory, forgetMemories } from "../services/memory.js";
+import { createSnapshot, acceptBatch, getOperation } from "../services/memoryBatches.js";
+import { searchSchema, entrySchema, MemoryError, validateProfile } from "../services/memoryProtocol.js";
 import { config } from "../config.js";
 
 export const memoryRouter = Router();
-
-// All memory routes require both auth layers (决策 F4: fail-closed, owner isolation).
-memoryRouter.use(requireMemoryAuth);
-memoryRouter.use(requireSenderId);
-
-/**
- * GET /api/memory/profile — 按 sender_id 读取画像。
- * Header: X-Sender-Id + Authorization: Bearer <token>
- * 响应：200 + ProfileRow | 404 { error: "未找到画像" }
- */
-memoryRouter.get("/profile", (req: Request, res: Response) => {
-  const ownerKey = (req as any).ownerKey as string;
-  const profile = getProfile(ownerKey);
-  if (!profile) {
-    res.status(404).json({ error: "未找到画像" });
-    return;
-  }
-  res.json(profile);
-});
-
-/**
- * PUT /api/memory/profile — 写画像。
- * Body: { nickname?: string, profile_patch?: object, merge_mode?: "merge" | "replace" }
- * merge_mode 默认 "merge"（向后兼容），"replace" 整条覆盖。
- * 响应：200 + ProfileRow
- */
-memoryRouter.put("/profile", (req: Request, res: Response) => {
-  const ownerKey = (req as any).ownerKey as string;
-  const { nickname, profile_patch, merge_mode } = req.body ?? {};
-
-  if (profile_patch !== undefined && typeof profile_patch !== "object") {
-    res.status(400).json({ error: "profile_patch 必须是对象" });
-    return;
-  }
-
-  const mergeMode: "merge" | "replace" =
-    merge_mode === "replace" ? "replace" : "merge";
-  const profile = upsertProfile(ownerKey, nickname, profile_patch, mergeMode);
-  res.json(profile);
-});
-
-/**
- * POST /api/memory/write — 写沉淀。
- * Body: { content: string, salience?: number }
- * 响应：201 { id, chunk_count }
- */
-memoryRouter.post("/write", async (req: Request, res: Response) => {
-  const ownerKey = (req as any).ownerKey as string;
-  const { content, salience } = req.body ?? {};
-
-  if (typeof content !== "string" || !content.trim()) {
-    res.status(400).json({ error: "content 必须是非空字符串" });
-    return;
-  }
-
-  try {
-    const result = await writeMemory(ownerKey, content.trim(), salience);
-    res.status(201).json(result);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[memory] write failed:", msg);
-    res.status(500).json({ error: msg });
-  }
-});
-
-/**
- * POST /api/memory/search — 按 owner_key 检索沉淀。
- * Body: { query: string, top_k?: number }
- * 响应：200 { hits: MemoryHit[] }
- */
-memoryRouter.post("/search", async (req: Request, res: Response) => {
-  const ownerKey = (req as any).ownerKey as string;
-  const { query, top_k } = req.body ?? {};
-
-  if (typeof query !== "string" || !query.trim()) {
-    res.status(400).json({ error: "query 必须是非空字符串" });
-    return;
-  }
-
-  const topK =
-    typeof top_k === "number" && top_k > 0
-      ? top_k
-      : config.retrieval.topK;
-
-  try {
-    const hits = await searchMemory(ownerKey, query.trim(), topK);
-    res.json({ hits });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[memory] search failed:", msg);
-    res.status(500).json({ error: msg });
-  }
-});
-
-/**
- * POST /api/memory/forget — 按 hint 删除 owner 的匹配记忆条目（P7 遗忘机制）。
- * Body: { hints: string[] }
- * 响应：200 { deleted: number }
- */
-memoryRouter.post("/forget", (req: Request, res: Response) => {
-  const ownerKey = (req as any).ownerKey as string;
-  const { hints } = req.body ?? {};
-
-  if (!Array.isArray(hints) || hints.length === 0) {
-    res.status(400).json({ error: "hints 必须是非空数组" });
-    return;
-  }
-  for (const h of hints) {
-    if (typeof h !== "string" || !h.trim()) {
-      res.status(400).json({ error: "hints 中每条必须是非空字符串" });
-      return;
-    }
-  }
-
-  const result = forgetMemories(ownerKey, hints);
-  res.json(result);
-});
+memoryRouter.use(requireMemoryAuth, requireSenderId);
+const owner = (r: Request): string => (r as Request & {ownerKey:string}).ownerKey;
+const safe = (fn:(r:Request,s:Response)=>unknown) => (r:Request,s:Response,n:NextFunction):void => {Promise.resolve().then(()=>fn(r,s)).catch(n);};
+export const legacyProfileSchema = z.object({nickname:z.string().max(200).optional(),profile_patch:z.record(z.unknown()).optional(),merge_mode:z.enum(["merge","replace"]).default("merge")}).strict();
+memoryRouter.get("/profile",safe((req,res)=>{
+  const profile=getProfile(owner(req));
+  return profile ? res.json(profile):res.status(404).json({error:"未找到画像",code:"PROFILE_NOT_FOUND"});
+}));
+memoryRouter.put("/profile",safe((req,res)=>{
+  const input=legacyProfileSchema.parse(req.body);
+  if(input.profile_patch!==undefined) validateProfile(input.profile_patch);
+  return res.json(upsertProfile(owner(req),input.nickname,input.profile_patch,input.merge_mode));
+}));
+memoryRouter.post("/write",safe(async(req,res)=>{
+  const input=entrySchema.parse(req.body);
+  return res.status(201).json(await writeMemory(owner(req),input.content,input.salience));
+}));
+memoryRouter.post("/search",safe(async(req,res)=>{
+  const input=searchSchema.parse(req.body);
+  return res.json({hits:await searchMemory(owner(req),input.query,input.top_k??Math.min(50,config.retrieval.topK))});
+}));
+memoryRouter.post("/forget",safe((req,_res)=>forgetMemories(owner(req),[])));
+memoryRouter.post("/v2/snapshot",safe(async(req,res)=>res.json(await createSnapshot(owner(req),req.body))));
+memoryRouter.post("/v2/batches",safe((req,res)=>{
+  const result=acceptBatch(owner(req),req.body);
+  return res.status(result.state==="committed"?200:202).json(result);
+}));
+memoryRouter.get("/v2/batches/:id",safe((req,res)=>{
+  const result=getOperation(owner(req),req.params.id);
+  if(!result) throw new MemoryError("OPERATION_NOT_FOUND",404);
+  return res.json(result);
+}));

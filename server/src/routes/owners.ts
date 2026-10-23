@@ -11,17 +11,20 @@ import {
   writeMemory,
 } from "../services/adminMemory.js";
 
+import { entrySchema } from "../services/memoryProtocol.js";
+import { operationMetrics, retryOperation } from "../services/memoryBatches.js";
 export const ownersRouter = Router();
+ownersRouter.get("/operations/status", (_req,res)=>res.json(operationMetrics()));
+ownersRouter.post("/:ownerKey/operations/:id/retry", (req,res)=>{
+  res.status(retryOperation(req.params.ownerKey,req.params.id)?202:404).json({accepted:true});
+});
 
 // ====== 校验 schema ======
 
-const postMemorySchema = z.object({
-  content: z.string().min(1, "content 必须是非空字符串"),
-  salience: z.number().optional(),
-});
+const postMemorySchema = entrySchema;
 
 const putProfileSchema = z.object({
-  nickname: z.string().optional(),
+  nickname: z.string().max(200).optional(),
   profile_patch: z.record(z.unknown()).optional(),
   merge_mode: z.enum(["merge", "replace"]).optional().default("merge"),
 });
@@ -40,7 +43,7 @@ ownersRouter.get("/:ownerKey/memory", (req, res) => {
 
 // ====== POST /api/owners/:ownerKey/memory — 补充写入记忆 ======
 
-ownersRouter.post("/:ownerKey/memory", async (req, res) => {
+ownersRouter.post("/:ownerKey/memory", async (req, res, next) => {
   const parsed = postMemorySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "content 必须是非空字符串" });
@@ -64,9 +67,7 @@ ownersRouter.post("/:ownerKey/memory", async (req, res) => {
     );
     res.status(201).json(result);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[owners] write memory failed:", msg);
-    res.status(500).json({ error: msg });
+    next(err);
   }
 });
 
@@ -74,7 +75,7 @@ ownersRouter.post("/:ownerKey/memory", async (req, res) => {
 
 ownersRouter.delete("/:ownerKey/memory/:id", (req, res) => {
   const id = Number(req.params.id);
-  if (!Number.isFinite(id) || id <= 0) {
+  if (!Number.isSafeInteger(id) || id <= 0) {
     res.status(400).json({ error: "id 必须是正整数" });
     return;
   }

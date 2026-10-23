@@ -1,9 +1,11 @@
 import { db, getMemVecDim, memVecTableExists } from "../db/index.js";
+import { configuredSpace, activeSpace } from "./memorySpace.js";
 import { getEmbeddingSettings } from "./settings.js";
 import {
   getProfile,
   upsertProfile,
   writeMemory,
+  deleteExactMemory,
 } from "./memory.js";
 
 // 复用导出（供 routes/owners.ts 使用）
@@ -71,38 +73,7 @@ export function listMemoryByOwner(ownerKey: string): MemoryEntryRow[] {
  * 3. changes===1 → 才按 rowid 级联删 vec_mem（懒建守卫）+ mem_fts
  */
 export function deleteMemoryById(ownerKey: string, id: number): boolean {
-  const delEntry = db.prepare(
-    "DELETE FROM memory_entries WHERE id = ? AND owner_key = ?",
-  );
-  const delFts = db.prepare("DELETE FROM mem_fts WHERE rowid = ?");
-  const delFtsCjk = db.prepare("DELETE FROM mem_fts_cjk WHERE rowid = ?");
-
-  let delVec: ReturnType<typeof db.prepare> | null = null;
-  if (memVecTableExists()) {
-    try {
-      delVec = db.prepare("DELETE FROM vec_mem WHERE rowid = ?");
-    } catch {
-      /* vec_mem may not exist yet */
-    }
-  }
-
-  const tx = db.transaction(() => {
-    const entryResult = delEntry.run(id, ownerKey);
-    if (entryResult.changes === 0) return false;
-
-    if (delVec) {
-      try {
-        delVec.run(BigInt(id));
-      } catch {
-        /* vec_mem 行可能不存在 */
-      }
-    }
-    delFts.run(id);
-    delFtsCjk.run(id);
-    return true;
-  });
-
-  return tx();
+  return deleteExactMemory(ownerKey, id);
 }
 
 // ====== 删除画像 ======
@@ -124,5 +95,5 @@ export function deleteProfile(ownerKey: string): boolean {
 export function dimensionInSync(): boolean {
   const { dim } = getEmbeddingSettings();
   if (!dim || dim <= 0) return false;
-  return dim === getMemVecDim();
+  try { return dim === getMemVecDim() && activeSpace() === configuredSpace(); } catch { return false; }
 }

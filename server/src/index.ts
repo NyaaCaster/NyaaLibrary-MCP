@@ -10,6 +10,11 @@ import { createMcpServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
 import { requireMcpAuth, mcpAuthEnabled } from "./auth/mcp.js";
 import { createApiRouter } from "./routes/index.js";
 import "./db/index.js"; // initialise schema on boot
+import { ZodError } from "zod";
+import { MemoryError } from "./services/memoryProtocol.js";
+import { startMemoryWorker } from "./services/memoryBatches.js";
+import { activeSpace, configuredSpace } from "./services/memorySpace.js";
+import { maintenance } from "./services/memoryMaintenance.js";
 
 const MCP_PATH = "/mcp";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -17,6 +22,19 @@ const PUBLIC_DIR = resolve(__dirname, "../public");
 
 const app = express();
 app.use(express.json({ limit: `${config.upload.maxFileSizeMb}mb` }));
+const stopMemoryWorker = startMemoryWorker();
+app.use((req,res,next)=>{
+  const mode=maintenance();
+  const safeRead=["GET","HEAD","OPTIONS"].includes(req.method) || req.path.endsWith("/search") || req.path.startsWith("/api/auth/");
+  const smoke=req.path.startsWith("/api/memory/") && mode.smokeOwner && req.header("X-Sender-Id")===mode.smokeOwner;
+  if(mode.active && !safeRead && !smoke) {res.status(503).json({code:"MAINTENANCE",error:"Service maintenance"});return;}
+  next();
+});
+app.get("/ready",(_req,res)=>{
+  let ready=false;
+  try {ready=activeSpace()===configuredSpace();} catch { /* fail closed */ }
+  res.status(ready?200:503).json({ready,schema:2,maintenance:maintenance().active});
+});
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", name: SERVER_NAME, version: SERVER_VERSION });
@@ -24,6 +42,12 @@ app.get("/health", (_req, res) => {
 
 // ---- Management REST API ----
 app.use("/api", createApiRouter());
+app.use((error:unknown,_req:Request,res:Response,_next:express.NextFunction)=>{
+  const code=error instanceof MemoryError?error.code:error instanceof ZodError?"INVALID_REQUEST":"INTERNAL_ERROR";
+  const status=error instanceof MemoryError?error.status:error instanceof ZodError?400:500;
+  if(status>=500) console.error("[api]",code);
+  res.status(status).json({error:code,code});
+});
 
 // ---- MCP endpoint (Streamable HTTP + legacy SSE), Bearer-guarded ----
 app.use(MCP_PATH, requireMcpAuth);
@@ -139,7 +163,7 @@ const httpServer = app.listen(config.port, config.host, () => {
 
 function shutdown(sig: string): void {
   console.log(`[${SERVER_NAME}] ${sig} received, shutting down.`);
-  httpServer.close(() => process.exit(0));
+  httpServer.close(() => {void stopMemoryWorker().finally(()=>process.exit(0));});
 }
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));

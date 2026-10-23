@@ -3,6 +3,9 @@ import { bigram } from "../utils/bigram.js";
 import { embedMany, l2Normalize } from "./embedding.js";
 import { getEmbeddingSettings } from "./settings.js";
 import { config } from "../config.js";
+import { entrySchema, MemoryError, validateProfile } from "./memoryProtocol.js";
+import { maintenance } from "./memoryMaintenance.js";
+import { ensureMemorySpace, vectorBuffer } from "./memorySpace.js";
 
 // ====== 类型 ======
 
@@ -46,6 +49,8 @@ export function upsertProfile(
   profilePatch?: Record<string, unknown>,
   mergeMode: "merge" | "replace" = "merge",
 ): ProfileRow {
+  if (profilePatch !== undefined) validateProfile(profilePatch);
+  if (nickname !== undefined && (typeof nickname !== "string" || nickname.length > 200)) throw new MemoryError("INVALID_NICKNAME");
   const now = new Date().toISOString();
   const existing = db
     .prepare("SELECT profile_json, nickname FROM profiles WHERE sender_id = ?")
@@ -61,12 +66,13 @@ export function upsertProfile(
         ? JSON.stringify({ ...oldProfile, ...profilePatch })
         : existing.profile_json;
     }
+    validateProfile(JSON.parse(merged));
     const newNickname =
       nickname !== undefined ? nickname : existing.nickname;
 
     db.prepare(
       `UPDATE profiles
-         SET nickname = ?, profile_json = ?, updated_at = ?
+         SET nickname = ?, profile_json = ?, updated_at = ?, revision = revision + 1
        WHERE sender_id = ?`,
     ).run(newNickname, merged, now, ownerKey);
   } else {
@@ -81,222 +87,44 @@ export function upsertProfile(
   return getProfile(ownerKey)!;
 }
 
-// ====== 沉淀写入 ======
-
-/** 写一条记忆沉淀：embed → 事务写 memory_entries + vec_mem + mem_fts + mem_fts_cjk。 */
-export async function writeMemory(
-  ownerKey: string,
-  content: string,
-  salience: number = 0.5,
-): Promise<{ id: number; chunk_count: number }> {
-  const { dim } = getEmbeddingSettings();
-  if (!dim || dim <= 0) {
-    throw new Error("尚未配置嵌入维度，请先在「嵌入模型设置」中保存并自动获取维度");
-  }
-
-  const embeddings = await embedMany([content]);
-  if (!embeddings[0] || embeddings[0].length !== dim) {
-    throw new Error(`嵌入维度与配置不一致（期望 ${dim}）`);
-  }
-
-  ensureMemVecTable(dim);
-  if (getMemVecDim() !== dim) {
-    throw new Error("向量表维度与当前嵌入维度不匹配");
-  }
-
-  // salience clamp：非数值/NaN → 落 0.5；否则 clamp [0, 1]（SSOT D1）
-  const clampedSalience =
-    typeof salience === "number" && !Number.isNaN(salience)
-      ? Math.min(1, Math.max(0, salience))
-      : 0.5;
-
-  // ---- 去重检测（D3, SSOT P2）----
-  // 同 owner 域内 vec KNN → 归一化余弦 ≥ 阈值则判定为同一事实，走 D4 合并。
-  let mergeTargetId: number | null = null;
-  if (config.memory.dedupEnabled && memVecTableExists()) {
-    try {
-      const rows = db
-        .prepare(
-          `WITH knn AS (
-             SELECT rowid AS mem_id, distance
-             FROM vec_mem
-             WHERE embedding MATCH ? AND k = ?
-           )
-           SELECT knn.mem_id AS id
-             FROM knn
-             JOIN memory_entries m ON m.id = knn.mem_id
-            WHERE m.owner_key = ?
-            ORDER BY knn.distance
-            LIMIT 1`,
-        )
-        .all(
-          JSON.stringify(embeddings[0]),
-          config.retrieval.denseTopK,
-          ownerKey,
-        ) as { id: number }[];
-
-      if (rows.length > 0) {
-        const candRow = db
-          .prepare("SELECT embedding FROM vec_mem WHERE rowid = ?")
-          .get(rows[0].id) as { embedding: string } | undefined;
-        if (candRow) {
-          const vNew = l2Normalize([...embeddings[0]]);
-          const vCand = l2Normalize(JSON.parse(candRow.embedding) as number[]);
-          let sim = 0;
-          for (let i = 0; i < vNew.length; i++) sim += vNew[i] * vCand[i];
-          if (sim >= config.memory.dedupSimThreshold) {
-            mergeTargetId = rows[0].id;
-          }
-        }
-      }
-    } catch (err) {
-      console.warn("[memory] dedup check skipped:", (err as Error).message);
-    }
-  }
-
-  const now = new Date().toISOString();
-  const cjkContent = bigram(content);
-
-  // D4 冲突消解：合并到已有条目（SSOT D4）
-  if (mergeTargetId !== null) {
-    const updateEntry = db.prepare(
-      `UPDATE memory_entries
-          SET content = ?, char_count = ?, salience = MAX(salience, ?),
-              last_access = ?
-        WHERE id = ?`,
-    );
-    const syncVec = db.prepare("DELETE FROM vec_mem WHERE rowid = ?");
-    const syncVecIns = db.prepare(
-      "INSERT INTO vec_mem (rowid, embedding) VALUES (?, ?)",
-    );
-    const syncFts = db.prepare("DELETE FROM mem_fts WHERE rowid = ?");
-    const syncFtsIns = db.prepare(
-      "INSERT INTO mem_fts (rowid, content) VALUES (?, ?)",
-    );
-    const syncFtsCjk = db.prepare("DELETE FROM mem_fts_cjk WHERE rowid = ?");
-    const syncFtsCjkIns = db.prepare(
-      "INSERT INTO mem_fts_cjk (rowid, content) VALUES (?, ?)",
-    );
-
-    const tx = db.transaction(() => {
-      updateEntry.run(
-        content,
-        content.length,
-        clampedSalience,
-        now,
-        mergeTargetId,
-      );
-      const bigId = BigInt(mergeTargetId!);
-      syncVec.run(bigId);
-      syncVecIns.run(bigId, JSON.stringify(embeddings[0]));
-      syncFts.run(mergeTargetId!);
-      syncFtsIns.run(mergeTargetId!, content);
-      syncFtsCjk.run(mergeTargetId!);
-      syncFtsCjkIns.run(mergeTargetId!, cjkContent);
-      return mergeTargetId!;
-    });
-
-    const id = tx();
-    return { id, chunk_count: 1 };
-  }
-
-  // 原 append 路径（无候选 / 去重未命中）
-  const insertEntry = db.prepare(
-    `INSERT INTO memory_entries (owner_key, content, char_count, salience, last_access, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  );
-  const insertVec = db.prepare(
-    "INSERT INTO vec_mem (rowid, embedding) VALUES (?, ?)",
-  );
-  const insertFts = db.prepare(
-    "INSERT INTO mem_fts (rowid, content) VALUES (?, ?)",
-  );
-  const insertFtsCjk = db.prepare(
-    "INSERT INTO mem_fts_cjk (rowid, content) VALUES (?, ?)",
-  );
-
-  const tx = db.transaction(() => {
-    const info = insertEntry.run(
-      ownerKey,
-      content,
-      content.length,
-      clampedSalience,
-      now,
-      now,
-    );
-    const id = Number(info.lastInsertRowid);
-    insertVec.run(BigInt(id), JSON.stringify(embeddings[0]));
-    insertFts.run(id, content);
-    insertFtsCjk.run(id, cjkContent);
-    return id;
-  });
-
-  const id = tx();
-  return { id, chunk_count: 1 };
+// Exact normalized duplicates are the only automatic deduplication path.
+export function normalizedContent(content: string): string {
+  return content.normalize("NFKC").replace(/\s+/gu, " ").trim();
 }
-
-// ====== 遗忘（P7 记忆写入策略）======
-
-/**
- * 按 hint 字符串检索并删除 owner 的匹配记忆条目。
- * 每个 hint 在 mem_fts 中搜索，删除匹配的 memory_entries + vec_mem + mem_fts 行。
- * 未匹配到任何条目时返回 {deleted: 0}，不报错。
- */
-export function forgetMemories(
-  ownerKey: string,
-  hints: string[],
-): { deleted: number } {
-  const delEntry = db.prepare("DELETE FROM memory_entries WHERE id = ?");
-  const delFts = db.prepare("DELETE FROM mem_fts WHERE rowid = ?");
-  const delFtsCjk = db.prepare("DELETE FROM mem_fts_cjk WHERE rowid = ?");
-
-  // vec_mem is lazily created — only prepare the delete if the table exists
-  let delVec: ReturnType<typeof db.prepare> | null = null;
-  if (memVecTableExists()) {
-    try {
-      delVec = db.prepare("DELETE FROM vec_mem WHERE rowid = ?");
-    } catch { /* vec_mem may not exist yet */ }
-  }
-
-  const idsToDelete = new Set<number>();
-
-  for (const hint of hints) {
-    if (!hint.trim()) continue;
-    try {
-      const rows = db
-        .prepare(
-          `SELECT f.rowid AS id
-             FROM mem_fts f
-             JOIN memory_entries m ON m.id = f.rowid
-            WHERE m.owner_key = ? AND f.content MATCH ?
-            LIMIT 20`,
-        )
-        .all(ownerKey, hint.trim()) as { id: number }[];
-      for (const r of rows) idsToDelete.add(r.id);
-    } catch {
-      // FTS MATCH 对某些 hint 语法可能抛出异常；跳过该 hint 继续。
-    }
-  }
-
-  if (idsToDelete.size === 0) return { deleted: 0 };
-
-  const tx = db.transaction(() => {
-    let deleted = 0;
-    for (const id of idsToDelete) {
-      const bigId = BigInt(id);
-      delEntry.run(id);
-      if (delVec) {
-        try { delVec.run(bigId); } catch { /* vec_mem 行可能不存在 */ }
-      }
-      delFts.run(id);
-      delFtsCjk.run(id);
-      deleted++;
-    }
-    return deleted;
-  });
-
-  const deleted = tx();
-  return { deleted };
+export function insertMemory(owner: string, content: string, salience: number, vector: number[]): number {
+  const duplicate = (db.prepare("SELECT id,content FROM memory_entries WHERE owner_key=?").all(owner) as {id:number;content:string}[])
+    .find(x => normalizedContent(x.content) === normalizedContent(content));
+  if (duplicate) return duplicate.id;
+  const now = new Date().toISOString();
+  const id = Number(db.prepare("INSERT INTO memory_entries(owner_key,content,char_count,salience,last_access,created_at) VALUES(?,?,?,?,?,?)")
+    .run(owner, content, content.length, salience, now, now).lastInsertRowid);
+  db.prepare("INSERT INTO vec_mem(rowid,embedding) VALUES(?,?)").run(BigInt(id), vectorBuffer(vector, getEmbeddingSettings().dim));
+  db.prepare("INSERT INTO mem_fts(rowid,content) VALUES(?,?)").run(id, content);
+  db.prepare("INSERT INTO mem_fts_cjk(rowid,content) VALUES(?,?)").run(id, bigram(content));
+  return id;
+}
+export function deleteExactMemory(owner: string, id: number): boolean {
+  return db.transaction(() => {
+    if (!db.prepare("DELETE FROM memory_entries WHERE owner_key=? AND id=?").run(owner, id).changes) return false;
+    if (memVecTableExists()) db.prepare("DELETE FROM vec_mem WHERE rowid=?").run(BigInt(id));
+    db.prepare("DELETE FROM mem_fts WHERE rowid=?").run(id);
+    db.prepare("DELETE FROM mem_fts_cjk WHERE rowid=?").run(id);
+    return true;
+  })();
+}
+export async function writeMemory(owner: string, content: string, salience = 0.5): Promise<{id:number;chunk_count:number}> {
+  const entry = entrySchema.parse({content, salience});
+  const space = ensureMemorySpace();
+  const [vector] = await embedMany([entry.content]);
+  vectorBuffer(vector, getEmbeddingSettings().dim);
+  return db.transaction(() => {
+    if (ensureMemorySpace() !== space) throw new MemoryError("MEMORY_SPACE_CHANGED",409);
+    return {id: insertMemory(owner, entry.content, entry.salience, vector), chunk_count:1};
+  })();
+}
+/** Legacy hint-only deletion cannot establish ownership/version evidence. */
+export function forgetMemories(_owner: string, _hints: string[]): {deleted:number} {
+  throw new MemoryError("UPGRADE_REQUIRED_USE_SNAPSHOT_REMOVALS", 409);
 }
 
 // ====== 沉淀检索 ======
@@ -437,6 +265,10 @@ export async function searchMemory(
 
   // ---- D2 last_access 回写（V2，best-effort）----
   try {
+    if (maintenance().active) return top.map(({ id, final }) => {
+      const row=db.prepare("SELECT id,content FROM memory_entries WHERE id=? AND owner_key=?").get(id,ownerKey) as {id:number;content:string};
+      return {...row,score:final};
+    });
     const updateLa = db.prepare(
       "UPDATE memory_entries SET last_access = ? WHERE id = ?",
     );
