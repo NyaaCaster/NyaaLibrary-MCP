@@ -1,11 +1,11 @@
 import { db, ensureMemVecTable, getMemVecDim, memVecTableExists, memFtsCjkTableExists } from "../db/index.js";
 import { bigram } from "../utils/bigram.js";
-import { embedMany, l2Normalize } from "./embedding.js";
+import { embedMany, embedTexts } from "./embedding.js";
 import { getEmbeddingSettings } from "./settings.js";
 import { config } from "../config.js";
 import { entrySchema, MemoryError, validateProfile } from "./memoryProtocol.js";
 import { maintenance } from "./memoryMaintenance.js";
-import { ensureMemorySpace, vectorBuffer } from "./memorySpace.js";
+import { ensureMemorySpace, vectorBuffer, decodeVector, activeSpace, configuredSpace } from "./memorySpace.js";
 
 // ====== 类型 ======
 
@@ -127,165 +127,101 @@ export function forgetMemories(_owner: string, _hints: string[]): {deleted:numbe
   throw new MemoryError("UPGRADE_REQUIRED_USE_SNAPSHOT_REMOVALS", 409);
 }
 
-// ====== 沉淀检索 ======
-
-/**
- * 混合检索沉淀：dense (vec_mem KNN) + sparse-trigram (mem_fts BM25)
- *   + sparse-cjk (mem_fts_cjk BM25, V2 D5) → RRF 融合 → D6 重排。
- *
- * 所有阶段强制 WHERE owner_key = ?（决策 F4 越权隔离红线）。
- */
-export async function searchMemory(
-  ownerKey: string,
-  query: string,
-  topK: number,
-): Promise<MemoryHit[]> {
+// Natural language is always quoted as data, never used as FTS syntax.
+export function ftsTerms(query: string, cjk = false): string[] {
+  const text = cjk ? bigram(query) : query;
+  return [...new Set(text.match(/[\p{L}\p{N}_]+/gu) ?? [])].slice(0, 100);
+}
+export function ftsExpression(terms: string[]): string {
+  return terms.map(x => '"' + x.replace(/"/g, '""') + '"').join(' OR ');
+}
+type Channel = {status: string; count: number};
+export async function searchMemoryDetailed(ownerKey: string, query: string, topK: number) {
+  const started = Date.now();
   const q = query.trim();
-  if (!q) return [];
-
-  // ---- Dense ranking ----
-  const denseRanks = new Map<number, number>();
-  if (memVecTableExists()) {
+  const channels: Record<string, Channel> = {};
+  const sparse = async (table: string, cjk: boolean) => {
+    const ranks = new Map<number, number>();
+    const name = cjk ? 'cjk' : 'sparse';
     try {
-      const [embedding] = await embedMany([q]);
-      if (embedding) {
-        const rows = db
-          .prepare(
-            `WITH knn AS (
-               SELECT rowid AS mem_id, distance
-               FROM vec_mem
-               WHERE embedding MATCH ? AND k = ?
-             )
-             SELECT knn.mem_id AS id
-               FROM knn
-               JOIN memory_entries m ON m.id = knn.mem_id
-              WHERE m.owner_key = ?
-              ORDER BY knn.distance`,
-          )
-          .all(
-            JSON.stringify(embedding),
-            config.retrieval.denseTopK,
-            ownerKey,
-          ) as { id: number }[];
-        rows.forEach((r, i) => denseRanks.set(r.id, i + 1));
+      const terms = ftsTerms(q, cjk);
+      if (!terms.length) { channels[name] = {status:'empty',count:0}; return ranks; }
+      const rows = db.prepare(`SELECT f.rowid AS id FROM ${table} f JOIN memory_entries m ON m.id=f.rowid
+        WHERE m.owner_key=? AND f.content MATCH ? ORDER BY bm25(${table}) LIMIT ?`)
+        .all(ownerKey, ftsExpression(terms), config.retrieval.sparseTopK) as {id:number}[];
+      rows.forEach((r,i) => ranks.set(r.id,i+1));
+      // Trigram cannot match 1-2 characters. Bound this owner-only fallback.
+      if (!cjk && terms.some(x => x.length < 3)) {
+        const short = terms.filter(x => x.length < 3).slice(0,20);
+        const extra = db.prepare(`SELECT id FROM memory_entries WHERE owner_key=? AND (${short.map(() => "instr(lower(content),?)>0").join(' OR ')}) ORDER BY id LIMIT ?`)
+          .all(ownerKey,...short.map(x=>x.toLowerCase()),config.retrieval.sparseTopK) as {id:number}[];
+        for (const row of extra) if (!ranks.has(row.id)) ranks.set(row.id,ranks.size+1);
       }
-    } catch (err) {
-      console.warn("[memory] dense stage skipped:", (err as Error).message);
-    }
-  }
-
-  // ---- Sparse ranking (trigram BM25) ----
-  const sparseRanks = new Map<number, number>();
-  try {
-    const rows = db
-      .prepare(
-        `SELECT f.rowid AS id
-           FROM mem_fts f
-           JOIN memory_entries m ON m.id = f.rowid
-          WHERE m.owner_key = ? AND f.content MATCH ?
-          ORDER BY bm25(mem_fts)
-          LIMIT ?`,
-      )
-      .all(ownerKey, q, config.retrieval.sparseTopK) as { id: number }[];
-    rows.forEach((r, i) => sparseRanks.set(r.id, i + 1));
-  } catch {
-    // FTS MATCH can throw on certain query syntax; ignore and rely on dense.
-  }
-
-  // ---- Sparse ranking (CJK bigram BM25) — V2 D5 ----
-  const cjkRanks = new Map<number, number>();
-  if (config.memory.cjkBigramEnabled) {
+      channels[name] = {status:'ok',count:ranks.size};
+    } catch { channels[name] = {status:'failed',count:0}; }
+    return ranks;
+  };
+  const dense = async () => {
+    const ranks = new Map<number, number>();
+    const deadline = started + 2000;
     try {
-      const cjkQuery = bigram(q);
-      if (cjkQuery) {
-        const rows = db
-          .prepare(
-            `SELECT f.rowid AS id
-               FROM mem_fts_cjk f
-               JOIN memory_entries m ON m.id = f.rowid
-              WHERE m.owner_key = ? AND f.content MATCH ?
-              ORDER BY bm25(mem_fts_cjk)
-              LIMIT ?`,
-          )
-          .all(ownerKey, cjkQuery, config.retrieval.sparseTopK) as { id: number }[];
-        rows.forEach((r, i) => cjkRanks.set(r.id, i + 1));
+      if (!memVecTableExists() || activeSpace() !== configuredSpace()) throw new Error('SPACE');
+      const [vector] = await embedTexts([q], Math.max(1,deadline-Date.now()));
+      const dim = getEmbeddingSettings().dim;
+      vectorBuffer(vector,dim);
+      const norm = Math.hypot(...vector);
+      if (!norm) throw new Error('ZERO_VECTOR');
+      const scores: {id:number;score:number}[] = [];
+      const read = db.prepare('SELECT embedding FROM vec_mem WHERE rowid=?');
+      let cursor = 0;
+      let truncated = false;
+      while (true) {
+        if (Date.now() >= deadline) { truncated = true; break; }
+        const rows = db.prepare('SELECT id FROM memory_entries WHERE owner_key=? AND id>? ORDER BY id LIMIT 128').all(ownerKey,cursor) as {id:number}[];
+        if (!rows.length) break;
+        for (const row of rows) {
+          if (Date.now() >= deadline) { truncated = true; break; }
+          const stored = read.get(BigInt(row.id)) as {embedding:Buffer} | undefined;
+          if (!stored) throw new Error('MISSING_VECTOR');
+          const v = decodeVector(stored.embedding,dim);
+          let dot = 0, size = 0;
+          for (let i=0;i<dim;i++) { dot+=vector[i]*v[i]; size+=v[i]*v[i]; }
+          if (!size) throw new Error('ZERO_VECTOR');
+          scores.push({id:row.id,score:dot/(norm*Math.sqrt(size))});
+        }
+        if (truncated) break;
+        cursor = rows[rows.length-1].id;
+        await new Promise<void>(resolve=>setImmediate(resolve));
       }
-    } catch {
-      // CJK channel failure is non-fatal; skip silently.
-    }
+      scores.sort((a,b)=>b.score-a.score || a.id-b.id);
+      scores.slice(0,config.retrieval.denseTopK).forEach((r,i)=>ranks.set(r.id,i+1));
+      channels.dense = {status:truncated?'budget_truncated':'ok',count:ranks.size};
+    } catch { channels.dense = {status:Date.now() >= deadline-20?'timeout':'failed',count:0}; }
+    return ranks;
+  };
+  const [denseRanks,sparseRanks,cjkRanks] = await Promise.all([dense(),sparse('mem_fts',false),
+    config.memory.cjkBigramEnabled?sparse('mem_fts_cjk',true):Promise.resolve(new Map<number,number>())]);
+  const fused = new Map<number,number>();
+  for (const ranks of [denseRanks,sparseRanks,cjkRanks]) for (const [id,rank] of ranks)
+    fused.set(id,(fused.get(id)??0)+1/(RRF_K+rank));
+  const read = db.prepare('SELECT id,content,salience,last_access,created_at FROM memory_entries WHERE owner_key=? AND id=?');
+  const hits = [...fused].map(([id,rrf])=>{
+    const row = read.get(ownerKey,id) as {id:number;content:string;salience:number;last_access:string|null;created_at:string};
+    const age = Math.max(0,(Date.now()-Date.parse(row.last_access??row.created_at))/86400000);
+    const score = rrf*(1+config.memory.salienceWeight*row.salience)*Math.pow(.5,age/config.memory.decayHalflifeDays);
+    return {id,content:row.content,score};
+  }).sort((a,b)=>b.score-a.score || a.id-b.id).slice(0,topK);
+  if (!maintenance().active && hits.length) {
+    try {
+      db.transaction(()=>{
+        const update=db.prepare('UPDATE memory_entries SET last_access=? WHERE id=? AND owner_key=?');
+        for (const hit of hits) update.run(new Date().toISOString(),hit.id,ownerKey);
+      })();
+    } catch { console.warn('[memory] LAST_ACCESS_FAILED'); }
   }
-
-  // ---- Reciprocal Rank Fusion (3-way) ----
-  const fused = new Map<number, number>();
-  for (const [id, rank] of denseRanks)
-    fused.set(id, (fused.get(id) ?? 0) + 1 / (RRF_K + rank));
-  for (const [id, rank] of sparseRanks)
-    fused.set(id, (fused.get(id) ?? 0) + 1 / (RRF_K + rank));
-  for (const [id, rank] of cjkRanks)
-    fused.set(id, (fused.get(id) ?? 0) + 1 / (RRF_K + rank));
-
-  if (fused.size === 0) return [];
-
-  // ---- D6 统一重排（V2）----
-  // Fetch salience + timestamps for all fused candidates.
-  const fusedIds = [...fused.keys()];
-  const metaRows = db
-    .prepare(
-      `SELECT id, salience, last_access, created_at
-         FROM memory_entries
-        WHERE id IN (${fusedIds.map(() => "?").join(",")})`,
-    )
-    .all(...fusedIds) as {
-    id: number;
-    salience: number;
-    last_access: string | null;
-    created_at: string;
-  }[];
-  const metaMap = new Map(metaRows.map((r) => [r.id, r]));
-
-  const nowMs = Date.now();
-  const W = config.memory.salienceWeight;
-  const HL = config.memory.decayHalflifeDays;
-  const SEC_PER_DAY = 86400;
-
-  const scored = fusedIds.map((id) => {
-    const rrf = fused.get(id) ?? 0;
-    const meta = metaMap.get(id);
-    const sal = meta?.salience ?? 0.5;
-    const refTime = meta?.last_access ?? meta?.created_at ?? new Date(nowMs).toISOString();
-    const ageDays = (nowMs - new Date(refTime).getTime()) / 1000 / SEC_PER_DAY;
-    const decay = Math.pow(0.5, ageDays / HL);
-    const final = rrf * (1 + W * sal) * decay;
-    return { id, final, rrf };
-  });
-
-  scored.sort((a, b) => b.final - a.final);
-  const top = scored.slice(0, topK);
-  if (top.length === 0) return [];
-
-  // ---- D2 last_access 回写（V2，best-effort）----
-  try {
-    if (maintenance().active) return top.map(({ id, final }) => {
-      const row=db.prepare("SELECT id,content FROM memory_entries WHERE id=? AND owner_key=?").get(id,ownerKey) as {id:number;content:string};
-      return {...row,score:final};
-    });
-    const updateLa = db.prepare(
-      "UPDATE memory_entries SET last_access = ? WHERE id = ?",
-    );
-    const nowISO = new Date(nowMs).toISOString();
-    const tx = db.transaction(() => {
-      for (const { id } of top) updateLa.run(nowISO, id);
-    });
-    tx();
-  } catch (err) {
-    console.warn("[memory] last_access writeback skipped:", (err as Error).message);
-  }
-
-  const getEntry = db.prepare(
-    "SELECT id, content FROM memory_entries WHERE id = ?",
-  );
-  return top.map(({ id, final }) => {
-    const row = getEntry.get(id) as { id: number; content: string };
-    return { id: row.id, content: row.content, score: final };
-  });
+  const degraded = Object.entries(channels).filter(([,v])=>!['ok','empty'].includes(v.status)).map(([k,v])=>`${k}:${v.status}`);
+  return {hits,channels,elapsed_ms:Date.now()-started,degraded};
+}
+export async function searchMemory(ownerKey:string,query:string,topK:number):Promise<MemoryHit[]> {
+  return (await searchMemoryDetailed(ownerKey,query,topK)).hits;
 }

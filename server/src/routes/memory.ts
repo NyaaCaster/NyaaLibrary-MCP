@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import { requireMemoryAuth, requireSenderId } from "../auth/memory.js";
-import { getProfile, upsertProfile, writeMemory, searchMemory, forgetMemories } from "../services/memory.js";
+import { getProfile, upsertProfile, writeMemory, searchMemoryDetailed, forgetMemories } from "../services/memory.js";
 import { createSnapshot, acceptBatch, getOperation } from "../services/memoryBatches.js";
 import { searchSchema, entrySchema, MemoryError, validateProfile } from "../services/memoryProtocol.js";
 import { config } from "../config.js";
@@ -26,7 +26,7 @@ memoryRouter.post("/write",safe(async(req,res)=>{
 }));
 memoryRouter.post("/search",safe(async(req,res)=>{
   const input=searchSchema.parse(req.body);
-  return res.json({hits:await searchMemory(owner(req),input.query,input.top_k??Math.min(50,config.retrieval.topK))});
+  return res.json(await searchMemoryDetailed(owner(req),input.query,input.top_k??Math.min(50,config.retrieval.topK)));
 }));
 memoryRouter.post("/forget",safe((req,_res)=>forgetMemories(owner(req),[])));
 memoryRouter.post("/v2/snapshot",safe(async(req,res)=>res.json(await createSnapshot(owner(req),req.body))));

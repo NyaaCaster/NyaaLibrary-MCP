@@ -17,7 +17,7 @@ function endpoint(baseUrl: string): string {
 }
 
 /** Embed an ordered batch of texts via an OpenAI-compatible /embeddings API. */
-export async function embedTexts(texts: string[]): Promise<number[][]> {
+export async function embedTexts(texts: string[], timeoutMs = REQUEST_TIMEOUT_MS): Promise<number[][]> {
   const { base_url, api_key, model, dim } = getEmbeddingSettings();
   if (!base_url || !model) {
     throw new Error("嵌入模型未配置（缺少 Base URL 或模型名称）");
@@ -36,13 +36,19 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
       ...(api_key ? { Authorization: `Bearer ${api_key}` } : {}),
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`嵌入接口返回 HTTP ${res.status}：${detail.slice(0, 200)}`);
+    await res.body?.cancel();
+    throw new Error(`EMBEDDING_HTTP_${res.status}`);
   }
   const json = (await res.json()) as EmbeddingResponse;
+  if (!Array.isArray(json.data) || json.data.length !== texts.length ||
+      json.data.some((d, i, all) => !Number.isInteger(d.index) || d.index < 0 || d.index >= texts.length ||
+        all.findIndex(x => x.index === d.index) !== i || !Array.isArray(d.embedding) ||
+        d.embedding.length !== dim || d.embedding.some(v => typeof v !== 'number' || !Number.isFinite(v) || !Number.isFinite(Math.fround(v))))) {
+    throw new Error('INVALID_EMBEDDING_RESPONSE');
+  }
   return json.data
     .slice()
     .sort((a, b) => a.index - b.index)
