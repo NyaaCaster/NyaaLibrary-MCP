@@ -16,7 +16,8 @@ import { operationMetrics, retryOperation } from "../services/memoryBatches.js";
 export const ownersRouter = Router();
 ownersRouter.get("/operations/status", (_req,res)=>res.json(operationMetrics()));
 ownersRouter.post("/:ownerKey/operations/:id/retry", (req,res)=>{
-  res.status(retryOperation(req.params.ownerKey,req.params.id)?202:404).json({accepted:true});
+  const accepted=retryOperation(req.params.ownerKey,req.params.id);
+  res.status(accepted?202:404).json({accepted});
 });
 
 // ====== 校验 schema ======

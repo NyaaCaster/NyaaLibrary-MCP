@@ -9,7 +9,8 @@ import { BLESSING } from "./version.js";
 import { createMcpServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
 import { requireMcpAuth, mcpAuthEnabled } from "./auth/mcp.js";
 import { createApiRouter } from "./routes/index.js";
-import "./db/index.js"; // initialise schema on boot
+import { db, getMemVecDim, memVecTableExists } from "./db/index.js";
+import { getEmbeddingSettings } from "./services/settings.js";
 import { ZodError } from "zod";
 import { MemoryError } from "./services/memoryProtocol.js";
 import { startMemoryWorker } from "./services/memoryBatches.js";
@@ -32,7 +33,14 @@ app.use((req,res,next)=>{
 });
 app.get("/ready",(_req,res)=>{
   let ready=false;
-  try {ready=activeSpace()===configuredSpace();} catch { /* fail closed */ }
+  try {
+    ready=activeSpace()===configuredSpace() && memVecTableExists() && getMemVecDim()===getEmbeddingSettings().dim;
+    if(ready) {
+      const count=(table:string)=>(db.prepare(`SELECT count(*) n FROM ${table}`).get() as {n:number}).n;
+      const n=count('memory_entries');
+      ready=['vec_mem','mem_fts','mem_fts_cjk'].every(table=>count(table)===n && !db.prepare(`SELECT m.id FROM memory_entries m LEFT JOIN ${table} v ON v.rowid=m.id WHERE v.rowid IS NULL LIMIT 1`).get());
+    }
+  } catch { /* fail closed */ }
   res.status(ready?200:503).json({ready,schema:2,maintenance:maintenance().active});
 });
 
@@ -43,8 +51,9 @@ app.get("/health", (_req, res) => {
 // ---- Management REST API ----
 app.use("/api", createApiRouter());
 app.use((error:unknown,_req:Request,res:Response,_next:express.NextFunction)=>{
-  const code=error instanceof MemoryError?error.code:error instanceof ZodError?"INVALID_REQUEST":"INTERNAL_ERROR";
-  const status=error instanceof MemoryError?error.status:error instanceof ZodError?400:500;
+  const badJson=error instanceof SyntaxError && 'body' in error;
+  const code=error instanceof MemoryError?error.code:error instanceof ZodError || badJson?"INVALID_REQUEST":"INTERNAL_ERROR";
+  const status=error instanceof MemoryError?error.status:error instanceof ZodError || badJson?400:500;
   if(status>=500) console.error("[api]",code);
   res.status(status).json({error:code,code});
 });
@@ -163,7 +172,9 @@ const httpServer = app.listen(config.port, config.host, () => {
 
 function shutdown(sig: string): void {
   console.log(`[${SERVER_NAME}] ${sig} received, shutting down.`);
-  httpServer.close(() => {void stopMemoryWorker().finally(()=>process.exit(0));});
+  for(const transport of sseSessions.values()) void transport.close();
+  const stopped=stopMemoryWorker();
+  httpServer.close(() => {void stopped.finally(()=>{db.close();process.exit(0);});});
 }
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));

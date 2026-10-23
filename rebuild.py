@@ -63,6 +63,15 @@ def run(cmd: list[str], secrets: list[str], **kwargs) -> subprocess.CompletedPro
     return subprocess.run(cmd, **kwargs)
 
 
+def run_masked(cmd, secrets):
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               text=True, encoding="utf-8", errors="replace")
+    for line in process.stdout:
+        print(mask(line.rstrip(), secrets), flush=True)
+    process.wait()
+    return process
+
+
 def git_sha(length: int = 7) -> str:
     """Return short git HEAD SHA."""
     r = subprocess.run(
@@ -82,6 +91,7 @@ def git_sha(length: int = 7) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=f"Build & push {PROJECT} image")
     parser.add_argument("--no-cache", action="store_true", help="Force full rebuild")
+    parser.add_argument("--skip-cleanup", action="store_true", help="Keep rollback images and manifests")
     parser.add_argument("--skip-push", action="store_true", help="Build only, skip push")
     args = parser.parse_args()
 
@@ -106,7 +116,7 @@ def main() -> None:
     build_cmd = ["docker", "build", "-t", image_sha, "-t", image_latest, str(cwd)]
     if args.no_cache:
         build_cmd.insert(2, "--no-cache")
-    r = subprocess.run(build_cmd)
+    r = run_masked(build_cmd, secrets)
     if r.returncode != 0:
         print("[ERROR] Docker build failed.")
         sys.exit(1)
@@ -119,7 +129,7 @@ def main() -> None:
     # 2) Push (with retry)
     print(f"\n[2/4] Pushing {image_sha_m} (retry up to {RETRY_MAX}x) ...")
     for attempt in range(1, RETRY_MAX + 1):
-        r = subprocess.run(["docker", "push", image_sha])
+        r = run_masked(["docker", "push", image_sha], secrets)
         if r.returncode == 0:
             break
         print(f"  Push attempt {attempt} failed, retrying in {RETRY_DELAY}s...")
@@ -129,9 +139,14 @@ def main() -> None:
         sys.exit(1)
 
     print(f"\n[3/4] Pushing {image_latest_m} ...")
-    r = subprocess.run(["docker", "push", image_latest])
+    r = run_masked(["docker", "push", image_latest], secrets)
     if r.returncode != 0:
-        print("[WARN] latest tag push failed (non-fatal).")
+        print("[ERROR] latest tag push failed.")
+        sys.exit(1)
+
+    if args.skip_cleanup:
+        print("Done. Published; rollback images and manifests retained.")
+        return
 
     # 3) Registry cleanup
     print("\n[4/4] Cleaning old manifests from registry ...")

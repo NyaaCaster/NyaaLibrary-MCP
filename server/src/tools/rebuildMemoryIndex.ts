@@ -14,6 +14,7 @@ import { bigram } from "../utils/bigram.js";
 const artifactPath=resolve(process.env.MEMORY_INDEX_ARTIFACT ?? resolve(config.dataDir,"memory-index-r1.db"));
 const exists=existsSync(artifactPath);
 const artifact=new Database(artifactPath);
+try {
 if(exists) await artifact.backup(`${artifactPath}.pre-${Date.now()}.db`);
 artifact.exec("CREATE TABLE IF NOT EXISTS vectors(id INTEGER PRIMARY KEY,content_hash TEXT NOT NULL,version INTEGER NOT NULL,space TEXT NOT NULL,embedding BLOB NOT NULL)");
 const space=configuredSpace(),dim=getEmbeddingSettings().dim;
@@ -76,4 +77,4 @@ if(activate) {
   })();
 }
 console.log(JSON.stringify({stage:activate?"activated":"prepared",cursor,rebuilt,space}));
-artifact.close();db.close();
+} finally { artifact.close();db.close(); }

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
-import { embedMany } from "./embedding.js";
+import { embedTexts } from "./embedding.js";
 import { getEmbeddingSettings } from "./settings.js";
 import { getProfile, upsertProfile, searchMemory, insertMemory, deleteExactMemory } from "./memory.js";
 import { ensureMemorySpace, vectorBuffer } from "./memorySpace.js";
@@ -66,7 +66,8 @@ export async function processOperation(row:Operation):Promise<void> {
     .run(new Date().toISOString(),row.owner,row.operation_id);
   try {
     const space=input.memory_entries.length ? ensureMemorySpace():null;
-    const vectors=await embedMany(input.memory_entries.map(e=>e.content));
+    // Persistent operation retry owns the retry budget; avoid nested long retries.
+    const vectors=input.memory_entries.length ? await embedTexts(input.memory_entries.map(e=>e.content),15000) : [];
     vectors.forEach(v=>vectorBuffer(v,getEmbeddingSettings().dim));
     if(vectors.length!==input.memory_entries.length) throw new MemoryError("INVALID_EMBEDDING",502);
     db.transaction(()=>{

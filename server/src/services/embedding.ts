@@ -46,7 +46,7 @@ export async function embedTexts(texts: string[], timeoutMs = REQUEST_TIMEOUT_MS
   if (!Array.isArray(json.data) || json.data.length !== texts.length ||
       json.data.some((d, i, all) => !Number.isInteger(d.index) || d.index < 0 || d.index >= texts.length ||
         all.findIndex(x => x.index === d.index) !== i || !Array.isArray(d.embedding) ||
-        d.embedding.length !== dim || d.embedding.some(v => typeof v !== 'number' || !Number.isFinite(v) || !Number.isFinite(Math.fround(v))))) {
+        d.embedding.length === 0 || (dim > 0 && d.embedding.length !== dim) || d.embedding.some(v => typeof v !== 'number' || !Number.isFinite(v) || !Number.isFinite(Math.fround(v))))) {
     throw new Error('INVALID_EMBEDDING_RESPONSE');
   }
   return json.data

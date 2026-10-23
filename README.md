@@ -231,3 +231,16 @@ Profiles in v2 deep merge objects, replace arrays and preserve false/0; JSON Poi
 Memory vectors have a model/endpoint/dimension fingerprint. Unknown or changed spaces reject writes; no automatic DROP. Use `node server/dist/tools/rebuildMemoryIndex.js` against an isolated DB copy to prepare a resumable artifact, then `--activate` with `MEMORY_MAINTENANCE=1` and all writers stopped. Activation backs up DB, archives old vectors and transactionally switches only memory indices. Ordinary knowledge-base indices are unchanged. DATA_DIR/.r1-maintenance.json may contain `{ "active": true, "smokeOwner": "isolated-owner" }`; malformed maintenance files fail closed.
 
 Validation: `npx tsx server/tests/memory-r1.test.ts` uses a disposable DB, real sqlite-vec, and mock embeddings; cleans all generated files. Also run `npm run typecheck` and `npm run build`.
+
+
+## R1 可靠记忆协议（0.2.0）
+
+记忆调用方通过 `KB_SERVER_TOKEN` 与 `X-Sender-Id` 鉴权。`POST /api/memory/v2/snapshot` 冻结本人来源、画像 revision 和旧候选；`POST /api/memory/v2/batches` 持久接受批次，202 仅代表已接受。调用方持久化 operation_id 和完整请求，超时后先 `GET /api/memory/v2/batches/:id`，只有 committed 才清原文。同 ID 同体可重放，异体返回 409。画像递归合并保留 false/0，删除字段使用 JSON Pointer delete_paths。相似度不会自动删除；撤回必须引用快照旧 ID/version 和本人明确证据。
+
+旧 write 继续同步确认；旧 profile merge 保留浅合并语义。**旧 hint-only forget 返回 409，必须升级为快照精确撤回或管理员精确删除。** 向量空间/维度不匹配拒写，禁止普通写入重建表。
+
+`/health` 表示进程活着；`/ready` 同时验证 schema、记忆空间、维度及正文/向量/双FTS数量和rowid。`DATA_DIR/.r1-maintenance.json` 存在时阻止外部写，JSON 可配置仅用于隔离验证的 smoke_owner；坏文件保持维护。管理 session 仍与记忆 token 分开，可查询 `/api/owners/operations/status` 并对明确 parked 批次重试（具体路由见 owners.ts）。
+
+迁移前使用 SQLite backup API 创建一致快照。用相同 Embedding 环境运行 `node dist/tools/rebuildMemoryIndex.js` 生成可断点影子，再停写并设置维护模式，执行同命令 `--activate`。旧向量隔离到 memory_vector_archive，不重提炼正文、不更动普通知识库索引。维护前备份，失败保留影子与新待办；放行后禁止用旧库覆盖新数据。详细发布和恢复以跨项目 R1 SSOT 为准。
+
+验证：`npm run typecheck`、`npm run build`、`npx tsx server/tests/memory-r1.test.ts`、`npx tsx server/tests/memory-http-r1.test.ts`。测试使用独立临时目录与 mock Embedding，自动清理。专项镜像发布用 `python rebuild.py --skip-cleanup` 保留回滚镜像，不启动本机服务。
